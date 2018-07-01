@@ -27,19 +27,14 @@ EOS = _Vocabulary.EOS
 PAD = _Vocabulary.PAD
 
 
-def split_shard(*inputs, shard_size=-1):
+def split_shard(*inputs, split_size=-1):
 
-    def _chunk(seq, n):
-
-        for i in range(0, len(seq), n):
-            yield seq[i:i+n]
-
-    if shard_size < 0:
+    if split_size <= 0:
         yield inputs
     else:
 
         lengths = [len(s) for s in inputs[-1]] #
-        sorted_indices = np.argsort(lengths).tolist()
+        sorted_indices = np.argsort(lengths)
 
         # sorting inputs
 
@@ -48,9 +43,14 @@ def split_shard(*inputs, shard_size=-1):
             for inp in inputs
         ]
 
-        input_shards = [_chunk(inp, shard_size) for inp in inputs]
-        for inps in zip(*input_shards):
-            yield inps
+        # split shards
+        total_batch = sorted_indices.shape[0] # total number of batches
+        shard_size = total_batch // split_size
+
+        _indices = list(range(total_batch))[::shard_size] + [total_batch]
+
+        for beg, end in zip(_indices[:-1], _indices[1:]):
+            yield (inp[beg:end] for inp in inputs)
 
 def prepare_data(seqs_x, seqs_y=None, cuda=False, batch_first=True):
     """
@@ -302,7 +302,10 @@ def default_configs(configs):
         configs["training_configs"]["norm_by_words"] = False
 
     if "buffer_size" not in configs["training_configs"]:
-        configs["training_configs"]["buffer_size"] = 50 * configs["training_configs"]["batch_size"]
+        configs["training_configs"]["buffer_size"] = 100 * configs["training_configs"]["batch_size"]
+
+    if "bleu_valid_max_steps" not in configs["training_configs"]:
+        configs["training_configs"]["bleu_valid_max_steps"] = 150
 
     return configs
 
@@ -548,14 +551,14 @@ def train(FLAGS):
                 norm = batch_size_t
 
             cum_samples += batch_size_t
-            cum_words += sum(len(s) for s in seqs_y)
+            cum_words += word_size_t
 
             training_progress_bar.update(batch_size_t)
 
             # optim.zero_grad()
             nmt_model.zero_grad()
 
-            for seqs_x_t, seqs_y_t in split_shard(seqs_x, seqs_y, shard_size=training_configs['update_cycle']):
+            for seqs_x_t, seqs_y_t in split_shard(seqs_x, seqs_y, split_size=training_configs['update_cycle']):
 
                 # Prepare data
                 x, y = prepare_data(seqs_x_t, seqs_y_t, cuda=GlobalNames.USE_GPU)
