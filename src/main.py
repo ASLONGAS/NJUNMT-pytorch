@@ -726,7 +726,7 @@ def translate(FLAGS):
 
     valid_iterator = DataIterator(dataset=valid_dataset,
                                   batch_size=FLAGS.batch_size,
-                                  sort_buffer=False)
+                                  use_bucket=False)
 
     INFO('Done. Elapsed time {0}'.format(timer.toc()))
 
@@ -773,7 +773,7 @@ def translate(FLAGS):
     valid_iter = valid_iterator.build_generator()
     for batch in valid_iter:
 
-        seqs_x = batch[0]
+        seqs_x = batch
 
         batch_size_t = len(seqs_x)
 

@@ -1,5 +1,5 @@
 import numpy as np
-from itertools import islice
+import collections
 import random
 import tempfile
 import os
@@ -75,7 +75,7 @@ def accumulate_slicewhilce(data_iter, stop, key_func=lambda _: 1):
 
     return lines
 
-def shuffle(*path):
+def _shuffle(*path):
 
     f_handles = [open(p) for p in path]
 
@@ -122,7 +122,7 @@ class Dataset(object):
     def __len__(self):
         raise NotImplementedError
 
-    def _apply(self, lines):
+    def _apply(self, *lines):
         """ Do some processing on the raw input of the dataset.
 
         Return ```None``` when you don't want to output this line.
@@ -142,7 +142,7 @@ class Dataset(object):
         """
         raise NotImplementedError
 
-    def _not_empty(self, lines):
+    def _not_empty(self, *lines):
 
         if len([1 for l in lines if l is None]) == 0:
             return True
@@ -153,11 +153,14 @@ class Dataset(object):
 
         f_handles = self._data_iter(shuffle=shuffle)
 
+        if not isinstance(f_handles, collections.Sequence):
+            f_handles = [f_handles]
+
         for lines in zip(*f_handles):
 
-            lines = self._apply(lines)
+            lines = self._apply(*lines)
 
-            if self._not_empty(lines):
+            if self._not_empty(*lines):
                 yield lines
 
         [f.close() for f in f_handles]
@@ -204,12 +207,13 @@ class TextDataset(Dataset):
         return self.num_lines
 
     def _data_iter(self, shuffle):
-        if shuffle:
-            return shuffle(self._data_path)
-        else:
-            return [open(self._data_path)]
 
-    def _apply(self, lines):
+        if shuffle:
+            return _shuffle(self._data_path)
+        else:
+            return open(self._data_path)
+
+    def _apply(self, *lines):
         """
         Process one line
 
@@ -227,9 +231,9 @@ class TextDataset(Dataset):
         line = [self._vocab.token2id(w) for w in line]
 
         if self._max_len > 0 and len(line) > self._max_len:
-            return (None, )
+            return None
 
-        return (line, )
+        return line
 
 class ZipDatasets(Dataset):
 
@@ -250,18 +254,18 @@ class ZipDatasets(Dataset):
     def _data_iter(self, shuffle):
 
         if shuffle:
-            return shuffle(*[ds._data_path for ds in self.datasets])
+            return _shuffle(*[ds._data_path for ds in self.datasets])
         else:
             return [open(ds._data_path) for ds in self.datasets]
 
-    def _apply(self, lines):
+    def _apply(self, *lines):
         """
         :type dataset: TextDataset
         """
 
-        outs = [d._apply((l,)) for d, l in zip(self.datasets, lines)]
+        outs = [d._apply(l) for d, l in zip(self.datasets, lines)]
 
-        return sum(outs, ()) # (line_1, line_2, ..., line_n)
+        return outs # (line_1, line_2, ..., line_n)
 
 class DataIterator(object):
 
@@ -405,6 +409,7 @@ class DataIterator(object):
                 self.reset()
                 break
             else:
+
                 batch = [list(d) for d in zip(*batch_)]
 
                 yield batch
