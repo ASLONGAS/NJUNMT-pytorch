@@ -28,16 +28,17 @@ PAD = _Vocabulary.PAD
 
 
 def split_shard(*inputs, shard_size=-1):
+
     def _chunk(seq, n):
 
         for i in range(0, len(seq), n):
-            yield seq[i:i + n]
+            yield seq[i:i+n]
 
     if shard_size < 0:
         yield inputs
     else:
 
-        lengths = [len(s) for s in inputs[-1]]  #
+        lengths = [len(s) for s in inputs[-1]] #
         sorted_indices = np.argsort(lengths).tolist()
 
         # sorting inputs
@@ -50,7 +51,6 @@ def split_shard(*inputs, shard_size=-1):
         input_shards = [_chunk(inp, shard_size) for inp in inputs]
         for inps in zip(*input_shards):
             yield inps
-
 
 def prepare_data(seqs_x, seqs_y=None, cuda=False, batch_first=True):
     """
@@ -112,6 +112,7 @@ def compute_forward(model,
     :type critic: NMTCritierion
     """
 
+
     if eval:
         model.eval()
         critic.eval()
@@ -135,6 +136,7 @@ def compute_forward(model,
                       labels=y_label)
 
     if n_correctness:
+
         with torch.no_grad():
             mask = y_label.ne(PAD)
             pred = model.generator(dec_outs).max(2)[1]  # [batch_size, seq_len]
@@ -294,6 +296,16 @@ def load_pretrained_model(nmt_model, pretrain_path, map_dict=None, exclude_prefi
         INFO("Pretrained model loaded.")
 
 
+def default_configs(configs):
+
+    if "norm_by_words" not in configs["training_configs"]:
+        configs["training_configs"]["norm_by_words"] = False
+
+    if "buffer_size" not in configs["training_configs"]:
+        configs["training_configs"]["buffer_size"] = 50 * configs["training_configs"]["batch_size"]
+
+    return configs
+
 def train(FLAGS):
     """
     FLAGS:
@@ -314,6 +326,9 @@ def train(FLAGS):
     with open(config_path.strip()) as f:
         configs = yaml.load(f)
 
+    # Add default configs
+    configs = default_configs(configs)
+
     data_configs = configs['data_configs']
     model_configs = configs['model_configs']
     optimizer_configs = configs['optimizer_configs']
@@ -322,9 +337,6 @@ def train(FLAGS):
     if "seed" in training_configs:
         # Set random seed
         GlobalNames.SEED = training_configs['seed']
-
-    if 'buffer_size' not in training_configs:
-        training_configs['buffer_size'] = 100 * training_configs['batch_size']
 
     saveto_collections = '%s.pkl' % os.path.join(FLAGS.saveto, FLAGS.model_name + GlobalNames.MY_CHECKPOINIS_PREFIX)
     saveto_best_model = os.path.join(FLAGS.saveto, FLAGS.model_name + GlobalNames.MY_BEST_MODEL_SUFFIX)
@@ -342,6 +354,9 @@ def train(FLAGS):
     # Generate target dictionary
     vocab_src = Vocabulary(**data_configs["vocabularies"][0])
     vocab_tgt = Vocabulary(**data_configs["vocabularies"][1])
+
+    train_batch_size = training_configs["batch_size"] * max(1, training_configs["update_cycle"])
+    train_buffer_size = training_configs["buffer_size"] * max(1, training_configs["update_cycle"])
 
     train_bitext_dataset = ZipDataset(
         TextLineDataset(data_path=data_configs['train_data'][0],
@@ -365,10 +380,12 @@ def train(FLAGS):
     )
 
     training_iterator = DataIterator(dataset=train_bitext_dataset,
-                                     batch_size=training_configs['batch_size'],
+                                     batch_size=train_batch_size,
                                      use_bucket=training_configs['use_bucket'],
                                      buffer_size=training_configs['buffer_size'],
                                      batching_func=training_configs['batching_key'])
+                                     buffer_size=train_buffer_size,
+                                     batching_key=training_configs['batching_key'])
 
     valid_iterator = DataIterator(dataset=valid_bitext_dataset,
                                   batch_size=training_configs['valid_batch_size'],
@@ -464,7 +481,7 @@ def train(FLAGS):
         if optimizer_configs['schedule_method'] == "loss":
 
             scheduler = LossScheduler(optimizer=optim, **optimizer_configs['scheduler_configs']
-                                      )
+                                  )
 
         elif optimizer_configs['schedule_method'] == "noam":
             scheduler = NoamScheduler(optimizer=optim, **optimizer_configs['scheduler_configs'])
@@ -523,6 +540,13 @@ def train(FLAGS):
             seqs_x, seqs_y = batch
 
             batch_size_t = len(seqs_x)
+            word_size_t = sum(len(s) + 1 for s in seqs_y)  # Add 1 as we add a BOS at the beginning of the sentence.
+
+            if training_configs["norm_by_words"]:
+                norm = word_size_t
+            else:
+                norm = batch_size_t
+
             cum_samples += batch_size_t
             cum_words += sum(len(s) for s in seqs_y)
 
@@ -532,6 +556,7 @@ def train(FLAGS):
             nmt_model.zero_grad()
 
             for seqs_x_t, seqs_y_t in split_shard(seqs_x, seqs_y, shard_size=training_configs['update_cycle']):
+
                 # Prepare data
                 x, y = prepare_data(seqs_x_t, seqs_y_t, cuda=GlobalNames.USE_GPU)
 
@@ -540,7 +565,7 @@ def train(FLAGS):
                                        seqs_x=x,
                                        seqs_y=y,
                                        eval=False,
-                                       normalization=batch_size_t,
+                                       normalization=norm,
                                        shard_size=-1)
             optim.step()
 
