@@ -27,6 +27,49 @@ EOS = _Vocabulary.EOS
 PAD = _Vocabulary.PAD
 
 
+def _min_cond_to_trigger(global_step, n_epoch, min_step=-1):
+    """
+    If min_step is an integer within (0,10]
+
+    global_step is the minimum number of epochs to trigger action.
+    Otherwise it is the minimum number of steps.
+    """
+    if min_step > 0 and min_step <= 10:
+        if n_epoch >= min_step:
+            return True
+        else:
+            return False
+    else:
+        if global_step >= min_step:
+            return True
+        else:
+            return False
+
+def should_trigger_by_steps(global_step,
+                            n_epoch,
+                            every_n_step,
+                            min_step=-1,
+                            debug=False):
+    """
+    When to trigger bleu evaluation.
+    """
+    # Debug mode
+
+    if debug:
+        return True
+
+    # Not setting condition
+
+    if every_n_step <= 0:
+        return False
+
+    if _min_cond_to_trigger(global_step=global_step, n_epoch=n_epoch, min_step=min_step):
+
+        if np.mod(global_step, every_n_step) == 0:
+            return True
+        else:
+            return False
+
 def split_shard(*inputs, split_size=-1):
 
     if split_size <= 0:
@@ -574,7 +617,7 @@ def train(FLAGS):
 
             # ================================================================================== #
             # Display some information
-            if np.mod(uidx, training_configs['disp_freq']) == 0:
+            if should_trigger_by_steps(uidx, eidx, every_n_step=training_configs['disp_freq']):
                 # words per second and sents per second
                 words_per_sec = cum_words / (timer.toc(return_seconds=True))
                 sents_per_sec = cum_samples / (timer.toc(return_seconds=True))
@@ -588,7 +631,8 @@ def train(FLAGS):
 
             # ================================================================================== #
             # Saving checkpoints
-            if np.mod(uidx, training_configs['save_freq']) == 0 or FLAGS.debug:
+            if should_trigger_by_steps(uidx, eidx, every_n_step=training_configs['save_freq'],
+                                       debug=FLAGS.debug):
 
                 if not os.path.exists(FLAGS.saveto):
                     os.mkdir(FLAGS.saveto)
@@ -618,7 +662,8 @@ def train(FLAGS):
 
             # ================================================================================== #
             # Loss Validation & Learning rate annealing
-            if np.mod(uidx, training_configs['loss_valid_freq']) == 0 or FLAGS.debug:
+            if should_trigger_by_steps(global_step=uidx, n_epoch=eidx,
+                                       every_n_step=training_configs['loss_valid_freq'], debug=FLAGS.debug):
 
                 valid_loss, valid_n_correct = loss_validation(model=nmt_model,
                                                               critic=critic,
@@ -643,8 +688,11 @@ def train(FLAGS):
             # ================================================================================== #
             # BLEU Validation & Early Stop
 
-            if (np.mod(uidx, training_configs['bleu_valid_freq']) == 0 and uidx > training_configs['bleu_valid_warmup']) \
-                    or FLAGS.debug:
+            if should_trigger_by_steps(global_step=uidx, n_epoch=eidx,
+                                       every_n_step=training_configs['bleu_valid_freq'],
+                                       min_step=training_configs['bleu_valid_warmup'],
+                                       debug=FLAGS.debug):
+
 
                 valid_bleu = bleu_validation(uidx=uidx,
                                              valid_iterator=valid_iterator,
