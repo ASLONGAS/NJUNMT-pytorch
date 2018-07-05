@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from src.utils import Vocab
+from src.data.vocabulary import PAD
 
 # Loss compute
 def filter_shard_state(state):
@@ -133,7 +133,7 @@ class NMTCritierion(Critierion):
     TODO:
     1. Add label smoothing
     """
-    def __init__(self, padding_idx=Vocab.PAD, label_smoothing=0.0):
+    def __init__(self, padding_idx=PAD, label_smoothing=0.0):
 
         super().__init__()
         self.padding_idx = padding_idx
@@ -144,7 +144,7 @@ class NMTCritierion(Critierion):
             self.criterion = nn.KLDivLoss(size_average=False)
 
         else:
-            self.criterion = nn.NLLLoss(size_average=False, ignore_index=Vocab.PAD)
+            self.criterion = nn.NLLLoss(size_average=False, ignore_index=PAD)
 
         self.confidence = 1.0 - label_smoothing
 

@@ -1,20 +1,14 @@
 import numpy as np
-import collections
 import random
-import tempfile
-import os
 
-from .bpe import Bpe
-from .common_utils import Vocab, batch_open, GlobalNames
-from .logging import INFO
+from src.utils.common_utils import GlobalNames
 
 __all__ = [
-    'TextDataset',
-    'ZipDatasets',
     'DataIterator'
 ]
 
 random.seed(GlobalNames.SEED)
+
 
 class accumulate_takewhile(object):
     """
@@ -23,7 +17,7 @@ class accumulate_takewhile(object):
     >>> list(my_iter) # [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
     """
 
-    def __init__(self, iterable, stop, func=lambda item : 1):
+    def __init__(self, iterable, stop, func=lambda item: 1):
 
         self.iter = iter(iterable)
         self.func = func
@@ -52,6 +46,7 @@ class accumulate_takewhile(object):
             if count >= self.size:
                 return out
 
+
 def accumulate_slicewhilce(data_iter, stop, key_func=lambda _: 1):
     """Slicing data according to key function
 
@@ -75,199 +70,26 @@ def accumulate_slicewhilce(data_iter, stop, key_func=lambda _: 1):
 
     return lines
 
-def _shuffle(*path):
 
-    f_handles = [open(p) for p in path]
+def add_noise_to_length(lengths, noise=1.0):
+    """Add noise to the length of sequences.
 
-    # Read all the data
-    lines = []
-    for l in f_handles[0]:
-        line = [l.strip()] + [ff.readline().strip() for ff in f_handles[1:]]
-        lines.append(line)
+    Args:
+        lengths: The length of sequences.
+        noise_ratio: The ratio to add noise to the lengths.
+    """
 
-    # close file handles
-    [f.close() for f in f_handles]
+    noisy_lengths = [l + np.random.uniform(- noise, noise) for l in lengths]
 
-    # random shuffle the data
-    INFO('Shuffling data...')
-    random.shuffle(lines)
-    INFO('Done.')
+    return noisy_lengths
 
-    # Set up temp files
-    f_handles = []
-    for p in path:
-        _, filename = os.path.split(p)
-        f_handles.append(tempfile.TemporaryFile(prefix=filename + '.shuf', dir="/tmp/", mode="a+"))
-
-    for line in lines:
-        for ii, f in enumerate(f_handles):
-            print(line[ii], file=f)
-
-    # release memory
-    lines = []
-
-    # Reset file handles
-    [f.seek(0) for f in f_handles]
-
-    return tuple(f_handles)
-
-class Dataset(object):
-    def __init__(self, *args, **kwargs):
-        pass
-
-    @property
-    def num_datasets(self):
-        raise NotImplementedError
-
-    def __len__(self):
-        raise NotImplementedError
-
-    def _apply(self, *lines):
-        """ Do some processing on the raw input of the dataset.
-
-        Return ```None``` when you don't want to output this line.
-
-        Args:
-            lines: A tuple representing one line of the dataset, where ```len(lines) == self.num_datasets```
-
-        Returns:
-            A tuple representing the processed output of one line, whose length equals ```self.num_datasets```
-        """
-        raise NotImplementedError
-
-    def _data_iter(self, shuffle):
-        """ Generate file handles of datasets.
-
-        Always return a tuple of handles.
-        """
-        raise NotImplementedError
-
-    def _not_empty(self, *lines):
-
-        if len([1 for l in lines if l is None]) == 0:
-            return True
-        else:
-            return False
-
-    def data_iter(self, shuffle=False):
-
-        f_handles = self._data_iter(shuffle=shuffle)
-
-        if not isinstance(f_handles, collections.Sequence):
-            f_handles = [f_handles]
-
-        for lines in zip(*f_handles):
-
-            lines = self._apply(*lines)
-
-            if self._not_empty(*lines):
-                yield lines
-
-        [f.close() for f in f_handles]
-
-
-class TextDataset(Dataset):
-
-    def __init__(self,
-                 data_path,
-                 vocab,
-                 bpe_codes=None,
-                 use_char=False,
-                 max_len=-1,
-                 shuffle=False
-                 ):
-
-        super(TextDataset, self).__init__()
-
-        if bpe_codes is not None and use_char is True:
-            raise ValueError("BPE and character tokenizer could not use simultaneously!")
-
-        if not isinstance(vocab, Vocab):
-            raise ValueError("vocab must be an instance of Vocab.")
-
-        self._data_path = data_path
-        self._vocab = vocab
-        self._use_char = use_char
-        self._max_len = max_len
-        self.shuffle = shuffle
-
-        if bpe_codes is not None and len(bpe_codes) > 0:
-            self._bpe = Bpe(codes=bpe_codes) # type: Bpe
-        else:
-            self._bpe = None
-
-        with open(self._data_path) as f:
-            self.num_lines = sum(1 for _ in f)
-
-    @property
-    def num_datasets(self):
-        return 1
-
-    def __len__(self):
-        return self.num_lines
-
-    def _data_iter(self, shuffle):
-
-        if shuffle:
-            return _shuffle(self._data_path)
-        else:
-            return open(self._data_path)
-
-    def _apply(self, *lines):
-        """
-        Process one line
-
-        :type line: str
-        """
-
-        line = lines[0].strip().split()
-
-        if self._bpe is not None:
-            line = sum([self._bpe.segment_word(w) for w in line], [])
-
-        if self._use_char is True:
-            line = sum([list(w) for w in line], [])
-
-        line = [self._vocab.token2id(w) for w in line]
-
-        if self._max_len > 0 and len(line) > self._max_len:
-            return None
-
-        return line
-
-class ZipDatasets(Dataset):
-
-    def __init__(self, *datasets, shuffle=False):
-        """
-        """
-        super(ZipDatasets, self).__init__()
-        self.shuffle = shuffle
-        self.datasets = datasets
-
-    @property
-    def num_datasets(self):
-        return len(self.datasets)
-
-    def __len__(self):
-        return len(self.datasets[0])
-
-    def _data_iter(self, shuffle):
-
-        if shuffle:
-            return _shuffle(*[ds._data_path for ds in self.datasets])
-        else:
-            return [open(ds._data_path) for ds in self.datasets]
-
-    def _apply(self, *lines):
-        """
-        :type dataset: TextDataset
-        """
-
-        outs = [d._apply(l) for d, l in zip(self.datasets, lines)]
-
-        return outs # (line_1, line_2, ..., line_n)
 
 class DataIterator(object):
+    """
+    ```DataIterator``` defines the way to group your data into a batch. You can choose the way to batchify your data.
+    In current implementation, we only provide "samples" and "tokens", which are the two main methods in machine
+    translation.
+    """
 
     def __init__(self,
                  dataset,
@@ -304,9 +126,9 @@ class DataIterator(object):
         # translation, 50 batch size with "samples" as key means 50 bi-text sentences.
 
         if self.batching_key == "samples":
-            self.batching_key_func = lambda line : 1
+            self.batching_key_func = lambda line: 1
         else:
-            self.batching_key_func = lambda line : max(len(l) for l in line)
+            self.batching_key_func = lambda line: max(len(l) for l in line)
 
         # buffer size for bucketing
         # buffer size is the max number of batches in a buffer
@@ -328,7 +150,7 @@ class DataIterator(object):
 
     @property
     def n_datasets(self):
-        return self.dataset.num_datasets
+        return self.dataset.n_fields
 
     def _fill_buffer(self, batch_size=None):
 
@@ -344,33 +166,26 @@ class DataIterator(object):
             return
 
         # 2. Merge the residual samples in previous buffer (if any) into the inc_buffer
-
         if len(self.buffer) > 0:
             new_buffer = self.buffer[0] + inc_buffer
         else:
             new_buffer = inc_buffer
 
-
         # 3. Split buffer into batches. If ues_bucket is enable,
         # we sort the whole buffer according to the length of the sentence.
+        # In order to randomize the process of batching, we add a little bit noise on the length.
 
         if self.use_bucket:
-
             scores = np.array([max(len(s) for s in sample) for sample in new_buffer])
-            sorted_indices = np.argsort(scores).tolist()
+            noisy_scores = add_noise_to_length(scores)
+            sorted_indices = np.argsort(noisy_scores).tolist()
             new_buffer = [new_buffer[i] for i in sorted_indices]
+        else:
+            new_buffer.reverse()  # First-in-first-out
 
         new_batch_buffer = list(accumulate_takewhile(new_buffer, stop=batch_size, func=self.batching_key_func))
-        del new_buffer # release memory
+        del new_buffer  # release memory
 
-        # 4. If use_bucket is enable, we shuffle the order of batches.
-        if self.use_bucket and len(new_batch_buffer) > 1:
-            new_batch_buffer_full = new_batch_buffer[:-1]
-            random.shuffle(new_batch_buffer_full)
-            new_batch_buffer[:-1] = new_batch_buffer_full
-
-        # FIFO
-        new_batch_buffer.reverse()
         self.buffer = new_batch_buffer
 
     @property
@@ -410,9 +225,9 @@ class DataIterator(object):
                 break
             else:
 
-                batch = [list(d) for d in zip(*batch_)]
+                if self.n_datasets == 1:
+                    batch = batch_
+                else:
+                    batch = [list(d) for d in zip(*batch_)]
 
                 yield batch
-
-
-

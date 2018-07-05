@@ -12,11 +12,11 @@ __all__ = [
     'GlobalNames',
     'Timer',
     'Collections',
-    'Vocab',
     'sequence_mask',
     'build_vocab_shortlist',
     'to_gpu'
 ]
+
 
 # ================================================================================== #
 # File I/O Utils
@@ -56,6 +56,7 @@ class GlobalNames:
 
 time_format = '%Y-%m-%d %H:%M:%S'
 
+
 class Timer(object):
     def __init__(self):
         self.t0 = 0
@@ -77,8 +78,8 @@ class Timer(object):
         h, m = divmod(m, 60)
         return '%d:%02d:%02d' % (h, m, s)
 
-class Collections(object):
 
+class Collections(object):
     """Collections for logs during training.
 
     Usually we add loss and valid metrics to some collections after some steps.
@@ -128,12 +129,13 @@ class Collections(object):
             return []
         else:
             return self._kv_stores[key]
+
     @staticmethod
     def pickle(path, **kwargs):
         """
         :type path: str
         """
-        archives_ = dict([(k,v) for k,v in kwargs.items()])
+        archives_ = dict([(k, v) for k, v in kwargs.items()])
 
         if not path.endswith(".pkl"):
             path = path + ".pkl"
@@ -150,79 +152,18 @@ class Collections(object):
 
         return archives_
 
-class Vocab(object):
-
-    PAD = 0
-    EOS = 1
-    UNK = 3
-    BOS = 2
-
-    def __init__(self, dict_path, max_n_words=-1):
-
-        with open(dict_path) as f:
-            _dict = json.load(f)
-
-        # Word to word index and word frequence.
-        self._token2id_feq = self._init_dict()
-
-        N = len(self._token2id_feq)
-
-        for ww, vv in _dict.items():
-            if isinstance(vv, int):
-                self._token2id_feq[ww] = (vv + N, 0)
-            else:
-                self._token2id_feq[ww] = (vv[0] + N, vv[1])
-
-        self._id2token = dict([(ii[0], ww) for ww, ii in self._token2id_feq.items()])
-
-        self._max_n_words = max_n_words
-
-    @property
-    def max_n_words(self):
-
-        if self._max_n_words == -1:
-            return len(self._token2id_feq)
-        else:
-            return self._max_n_words
-
-    def _init_dict(self):
-
-        return {
-            "<PAD>": (Vocab.PAD, 0),
-            "<UNK>": (Vocab.UNK, 0),
-            "<EOS>": (Vocab.EOS, 0),
-            "<BOS>": (Vocab.BOS, 0)
-                }
-
-    def token2id(self, word):
-
-        if word in self._token2id_feq and self._token2id_feq[word][0] < self.max_n_words:
-
-            return self._token2id_feq[word][0]
-        else:
-            return Vocab.UNK
-
-    def id2token(self, id):
-
-        return self._id2token[id]
-
-    @staticmethod
-    def special_ids():
-
-        return [0, 1, 2]
 
 def sequence_mask(seqs_length):
-
     maxlen = np.max(seqs_length)
 
     row_vector = np.arange(maxlen)
 
-    mask = row_vector[None,:] < np.expand_dims(seqs_length, -1)
+    mask = row_vector[None, :] < np.expand_dims(seqs_length, -1)
 
     return mask.astype('float32')
 
-def build_vocab_shortlist(shortlist):
 
+def build_vocab_shortlist(shortlist):
     shortlist_ = nest.flatten(shortlist)
 
     shortlist_ = sorted(list(set(shortlist_)))
@@ -234,6 +175,6 @@ def build_vocab_shortlist(shortlist):
 
     return shortlist_np, map_to_shortlist, map_from_shortlist
 
-def to_gpu(*inputs):
 
+def to_gpu(*inputs):
     return list(map(lambda x: x.cuda(), inputs))

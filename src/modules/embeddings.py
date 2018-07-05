@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 
-from src.utils import Vocab
+from src.data.vocabulary import PAD
 import src.utils.init as my_init
 
 
@@ -13,7 +13,7 @@ class Embeddings(nn.Module):
                  embedding_dim,
                  dropout=0.0,
                  add_position_embedding=True,
-                 padding_idx=Vocab.PAD):
+                 padding_idx=PAD):
 
         super().__init__()
 

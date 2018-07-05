@@ -7,18 +7,14 @@ data_configs:
     - "./unittest/data/dev/zh.0"
     - "./unittest/data/dev/en.0"
   bleu_valid_reference: "./unittest/data/dev/en."
-  dictionaries:
-    - "./unittest/data/dict/dict.zh.json"
-    - "./unittest/data/dict/dict.en.json"
-  bpe_codes:
-    - ""
-    - ""
-  use_char:
-    - false
-    - false
-  n_words:
-    - 501
-    - 502
+  vocabularies:
+    - vocab_type: "word"
+      dict_path: "./unittest/data/dict/dict.zh.json"
+      max_n_words: 501
+    - vocab_type: "bpe"
+      dict_path: "./unittest/data/bpe/30K/dict/dict.en.json"
+      max_n_words: 501
+      bpe_codes: "./unittest/data/bpe/30K/codes/en.codes"
   max_len:
     - 20
     - 20

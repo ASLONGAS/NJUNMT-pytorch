@@ -8,7 +8,8 @@ import torch
 import numpy as np
 from src.utils.common_utils import *
 from src.utils.logging import *
-from src.utils.data_io import ZipDatasets, TextDataset, DataIterator
+from src.data import ZipDataset, TextDataset, DataIterator
+from src.data.vocabulary import Vocabulary, _Vocabulary
 from src.metric.bleu_scorer import ExternalScriptBLEUScorer
 import src.models
 from src.models import *
@@ -21,19 +22,22 @@ torch.manual_seed(GlobalNames.SEED)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(GlobalNames.SEED)
 
+BOS = _Vocabulary.BOS
+EOS = _Vocabulary.EOS
+PAD = _Vocabulary.PAD
+
 
 def split_shard(*inputs, shard_size=-1):
-
     def _chunk(seq, n):
 
         for i in range(0, len(seq), n):
-            yield seq[i:i+n]
+            yield seq[i:i + n]
 
     if shard_size < 0:
         yield inputs
     else:
 
-        lengths = [len(s) for s in inputs[-1]] #
+        lengths = [len(s) for s in inputs[-1]]  #
         sorted_indices = np.argsort(lengths).tolist()
 
         # sorting inputs
@@ -46,6 +50,7 @@ def split_shard(*inputs, shard_size=-1):
         input_shards = [_chunk(inp, shard_size) for inp in inputs]
         for inps in zip(*input_shards):
             yield inps
+
 
 def prepare_data(seqs_x, seqs_y=None, cuda=False, batch_first=True):
     """
@@ -77,15 +82,15 @@ def prepare_data(seqs_x, seqs_y=None, cuda=False, batch_first=True):
             x = x.cuda()
         return x
 
-    seqs_x = list(map(lambda s: [Vocab.BOS] + s + [Vocab.EOS], seqs_x))
-    x = _np_pad_batch_2D(samples=seqs_x, pad=Vocab.PAD,
+    seqs_x = list(map(lambda s: [BOS] + s + [EOS], seqs_x))
+    x = _np_pad_batch_2D(samples=seqs_x, pad=PAD,
                          cuda=cuda, batch_first=batch_first)
 
     if seqs_y is None:
         return x
 
-    seqs_y = list(map(lambda s: [Vocab.BOS] + s + [Vocab.EOS], seqs_y))
-    y = _np_pad_batch_2D(seqs_y, pad=Vocab.PAD,
+    seqs_y = list(map(lambda s: [BOS] + s + [EOS], seqs_y))
+    y = _np_pad_batch_2D(seqs_y, pad=PAD,
                          cuda=cuda, batch_first=batch_first)
 
     return x, y
@@ -106,7 +111,6 @@ def compute_forward(model,
 
     :type critic: NMTCritierion
     """
-
 
     if eval:
         model.eval()
@@ -131,10 +135,8 @@ def compute_forward(model,
                       labels=y_label)
 
     if n_correctness:
-
         with torch.no_grad():
-            
-            mask = y_label.ne(Vocab.PAD)
+            mask = y_label.ne(PAD)
             pred = model.generator(dec_outs).max(2)[1]  # [batch_size, seq_len]
             num_correct = y_label.eq(pred).float().masked_select(mask).sum() / normalization
 
@@ -187,7 +189,7 @@ def bleu_validation(uidx,
                     valid_iterator,
                     model,
                     bleu_scorer,
-                    vocab_tgt,
+                    vocab_tgt: _Vocabulary,
                     batch_size,
                     eval_at_char_level=False,
                     valid_dir="./valid",
@@ -200,20 +202,8 @@ def bleu_validation(uidx,
 
     :type bleu_scorer: ExternalScriptBLEUScorer
 
-    :type vocab_tgt: Vocab
+    :type vocab_tgt:
     """
-
-    def _split_into_chars(line):
-        new_line = []
-        for w in line:
-            if vocab_tgt.token2id(w) not in {Vocab.UNK, Vocab.EOS, Vocab.BOS, Vocab.PAD}:
-                # if not UNK, split into characters
-                new_line += list(w)
-            else:
-                # if UNK, treat as a special character
-                new_line.append(w)
-
-        return new_line
 
     model.eval()
 
@@ -238,31 +228,24 @@ def bleu_validation(uidx,
 
         # Append result
         for sent_t in word_ids:
-            sent_t = [[wid for wid in line if wid != Vocab.PAD] for line in sent_t]
+            sent_t = [[wid for wid in line if wid != vocab_tgt.PAD] for line in sent_t]
             x_tokens = []
 
             for wid in sent_t[0]:
-                if wid == Vocab.EOS:
+                if wid == EOS:
                     break
                 x_tokens.append(vocab_tgt.id2token(wid))
 
             if len(x_tokens) > 0:
-                trans.append(' '.join(x_tokens))
+                trans.append(vocab_tgt.detokenize(x_tokens))
             else:
-                trans.append('%s' % vocab_tgt.id2token(Vocab.EOS))
+                trans.append('%s' % vocab_tgt.id2token(vocab_tgt.EOS))
 
     infer_progress_bar.close()
 
-    # Merge bpe segmentation
-    trans = [line.replace("@@ ", "") for line in trans]
-
-    # Split into characters
-    if eval_at_char_level is True:
-        trans = [' '.join(_split_into_chars(line.strip().split())) for line in trans]
-
     if not os.path.exists(valid_dir):
         os.mkdir(valid_dir)
-    
+
     hyp_path = os.path.join(valid_dir, 'trans.iter{0}.txt'.format(uidx))
 
     with open(hyp_path, 'w') as f:
@@ -357,35 +340,27 @@ def train(FLAGS):
     timer.tic()
 
     # Generate target dictionary
-    vocab_src = Vocab(dict_path=data_configs['dictionaries'][0], max_n_words=data_configs['n_words'][0])
-    vocab_tgt = Vocab(dict_path=data_configs['dictionaries'][1], max_n_words=data_configs['n_words'][1])
+    vocab_src = Vocabulary(**data_configs["vocabularies"][0])
+    vocab_tgt = Vocabulary(**data_configs["vocabularies"][1])
 
-    train_bitext_dataset = ZipDatasets(
+    train_bitext_dataset = ZipDataset(
         TextDataset(data_path=data_configs['train_data'][0],
-                    vocab=vocab_src,
-                    bpe_codes=data_configs['bpe_codes'][0],
+                    vocabulary=vocab_src,
                     max_len=data_configs['max_len'][0],
-                    use_char=data_configs['use_char'][0]
                     ),
         TextDataset(data_path=data_configs['train_data'][1],
-                    vocab=vocab_tgt,
-                    bpe_codes=data_configs['bpe_codes'][1],
+                    vocabulary=vocab_tgt,
                     max_len=data_configs['max_len'][1],
-                    use_char=data_configs['use_char'][1]
                     ),
         shuffle=training_configs['shuffle']
     )
 
-    valid_bitext_dataset = ZipDatasets(
+    valid_bitext_dataset = ZipDataset(
         TextDataset(data_path=data_configs['valid_data'][0],
-                    vocab=vocab_src,
-                    bpe_codes=data_configs['bpe_codes'][0],
-                    use_char=data_configs['use_char'][0]
+                    vocabulary=vocab_src,
                     ),
         TextDataset(data_path=data_configs['valid_data'][1],
-                    vocab=vocab_tgt,
-                    bpe_codes=data_configs['bpe_codes'][1],
-                    use_char=data_configs['use_char'][1]
+                    vocabulary=vocab_tgt,
                     )
     )
 
@@ -489,7 +464,7 @@ def train(FLAGS):
         if optimizer_configs['schedule_method'] == "loss":
 
             scheduler = LossScheduler(optimizer=optim, **optimizer_configs['scheduler_configs']
-                                  )
+                                      )
 
         elif optimizer_configs['schedule_method'] == "noam":
             scheduler = NoamScheduler(optimizer=optim, **optimizer_configs['scheduler_configs'])
@@ -557,7 +532,6 @@ def train(FLAGS):
             nmt_model.zero_grad()
 
             for seqs_x_t, seqs_y_t in split_shard(seqs_x, seqs_y, shard_size=training_configs['update_cycle']):
-
                 # Prepare data
                 x, y = prepare_data(seqs_x_t, seqs_y_t, cuda=GlobalNames.USE_GPU)
 
@@ -717,12 +691,11 @@ def translate(FLAGS):
     timer.tic()
 
     # Generate target dictionary
-    vocab_src = Vocab(dict_path=data_configs['dictionaries'][0], max_n_words=data_configs['n_words'][0])
-    vocab_tgt = Vocab(dict_path=data_configs['dictionaries'][1], max_n_words=data_configs['n_words'][1])
+    vocab_src = Vocabulary(**data_configs["vocabularies"][0])
+    vocab_tgt = Vocabulary(**data_configs["vocabularies"][1])
 
     valid_dataset = TextDataset(data_path=FLAGS.source_path,
-                                vocab=vocab_src,
-                                bpe_codes=data_configs['bpe_codes'][0])
+                                vocabulary=vocab_src)
 
     valid_iterator = DataIterator(dataset=valid_dataset,
                                   batch_size=FLAGS.batch_size,
@@ -785,7 +758,7 @@ def translate(FLAGS):
 
         # Append result
         for sent_t in word_ids:
-            sent_t = [[wid for wid in line if wid != Vocab.PAD] for line in sent_t]
+            sent_t = [[wid for wid in line if wid != PAD] for line in sent_t]
             result.append(sent_t)
 
             n_words += len(sent_t[0])
@@ -802,10 +775,10 @@ def translate(FLAGS):
         for trans in sent:
             sample = []
             for w in trans:
-                if w == Vocab.EOS:
+                if w == vocab_tgt.EOS:
                     break
                 sample.append(vocab_tgt.id2token(w))
-            samples.append(' '.join(sample))
+            samples.append(vocab_tgt.detokenize(sample))
         translation.append(samples)
 
     keep_n = FLAGS.beam_size if FLAGS.keep_n <= 0 else min(FLAGS.beam_size, FLAGS.keep_n)
