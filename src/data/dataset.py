@@ -1,3 +1,4 @@
+from typing import Union
 import collections
 import random
 import tempfile
@@ -8,10 +9,42 @@ from src.utils.logging import INFO
 from .vocabulary import _Vocabulary
 
 __all__ = [
-    'TextDataset',
+    'TextLineDataset',
     'ZipDataset'
 ]
 
+
+class Record(object):
+    """
+    ```Record``` is one sample of a ```Dataset```. It has three attributions: ```data```, ```key``` and ```n_fields```.
+
+    ```data``` is the actual data format of one sample. It can be a single field or more.
+    ```key``` is used in bucketing, the larger of which means the size of the data.
+    ```
+    """
+    __slots__ = ("fields", "key")
+
+    def __init__(self, *fields, key):
+
+        self.fields = fields
+        self.key = key
+    @property
+    def n_fields(self):
+        return len(self.fields)
+
+def zip_records(*records: Record):
+    """
+    Combine several records into one single record. The key of the new record is the
+    maximum of previous keys.
+    """
+    new_fields = ()
+    keys = []
+
+    for r in records:
+        new_fields += r.fields
+        keys.append(r.key)
+
+    return Record(*new_fields, key=max(keys))
 
 def _shuffle(*path):
     f_handles = [open(p) for p in path]
@@ -52,12 +85,15 @@ def _shuffle(*path):
 class Dataset(object):
     """
     In ```Dataset``` object, you can define how to read samples from different formats of
-    raw data, and how to organize these samples. There are some things you need to override:
+    raw data, and how to organize these samples. Each time the ```Dataset``` return one record.
+
+    There are some things you need to override:
         - In ```n_fields``` you should define how many fields in one sample.
         - In ```__len__``` you should define the capacity of your dataset.
         - In ```_data_iter``` you should define how to read your data, using shuffle or not.
         - In ```_apply``` you should define how to transform your raw data into some kind of format that can be
-        computation-friendly.
+        computation-friendly. Must wrap the return value in a ```Record```， or return a ```None``` if this sample
+        should not be output.
     """
 
     def __init__(self, *args, **kwargs):
@@ -70,7 +106,7 @@ class Dataset(object):
     def __len__(self):
         raise NotImplementedError
 
-    def _apply(self, *lines):
+    def _apply(self, *lines) -> Union[Record, None]:
         """ Do some processing on the raw input of the dataset.
 
         Return ```None``` when you don't want to output this line.
@@ -90,13 +126,6 @@ class Dataset(object):
         """
         raise NotImplementedError
 
-    def _not_empty(self, *lines):
-
-        if len([1 for l in lines if l is None]) == 0:
-            return True
-        else:
-            return False
-
     def data_iter(self, shuffle=False):
 
         f_handles = self._data_iter(shuffle=shuffle)
@@ -106,15 +135,15 @@ class Dataset(object):
 
         for lines in zip(*f_handles):
 
-            lines = self._apply(*lines)
+            record = self._apply(*lines)
 
-            if self._not_empty(*lines):
-                yield lines
+            if record is not None:
+                yield record
 
         [f.close() for f in f_handles]
 
 
-class TextDataset(Dataset):
+class TextLineDataset(Dataset):
     """
     ```TextDataset``` is one kind of dataset each line of which is one sample. There is only one field each line.
     """
@@ -126,7 +155,7 @@ class TextDataset(Dataset):
                  shuffle=False
                  ):
 
-        super(TextDataset, self).__init__()
+        super(TextLineDataset, self).__init__()
 
         self._data_path = data_path
         self._vocab = vocabulary
@@ -150,21 +179,21 @@ class TextDataset(Dataset):
         else:
             return open(self._data_path)
 
-    def _apply(self, *lines):
+    def _apply(self, line: str) -> Union[Record, None]:
         """
         Process one line
 
         :type line: str
         """
 
-        line = self._vocab.tokenize(lines[0])
+        line = self._vocab.tokenize(line)
 
         line = [self._vocab.token2id(w) for w in line]
 
         if 0 < self._max_len < len(line):
             return None
 
-        return line
+        return Record(line, key=len(line))
 
 
 class ZipDataset(Dataset):
@@ -195,11 +224,14 @@ class ZipDataset(Dataset):
         else:
             return [open(ds._data_path) for ds in self.datasets]
 
-    def _apply(self, *lines):
+    def _apply(self, *lines: str) -> Union[Record, None]:
         """
         :type dataset: TextDataset
         """
 
-        outs = [d._apply(l) for d, l in zip(self.datasets, lines)]
+        records = [d._apply(l) for d, l in zip(self.datasets, lines)]
 
-        return outs  # (line_1, line_2, ..., line_n)
+        if any([r is None for r in records]):
+            return None
+        else:
+            return zip_records(*records)

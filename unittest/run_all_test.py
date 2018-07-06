@@ -15,6 +15,42 @@ def clean_tmp_dir(path):
 def rm_tmp_dir(path):
     subprocess.run("rm -rf {0}".format(path), shell=True)
 
+def test_data_io(test_dir):
+    import yaml
+    from src.data import TextLineDataset, DataIterator
+    from src.data.vocabulary import Vocabulary
+
+    config_path = "./unittest/configs/test_transformer.yaml"
+
+    with open(config_path) as f:
+        configs = yaml.load(f)
+
+    data_configs = configs['data_configs']
+
+    vocab_src = Vocabulary(**data_configs["vocabularies"][0])
+
+    with open(data_configs["train_data"][0]) as fin:
+        test_data_real = fin.readlines()
+    test_data_real = [line.strip().split() for line in test_data_real]
+
+    test_dataset = TextLineDataset(data_path=data_configs["train_data"][0],
+                                vocabulary=vocab_src)
+
+    test_iterator = DataIterator(dataset=test_dataset,
+                                 batch_size=3,
+                                 use_bucket=False)
+
+    test_iter = test_iterator.build_generator()
+
+    test_data = []
+
+    for batch in test_iter:
+        test_data += batch
+
+    if any(map(lambda pred, truth: len(pred) != len(truth), test_data, test_data_real)):
+        print("The order of data io is broken!")
+        exit(1)
+
 def test_transformer_train(test_dir):
     from src.bin import train
 
@@ -101,6 +137,14 @@ def test_all():
 
     if not os.path.exists(test_dir):
         os.makedirs(test_dir, exist_ok=True)
+
+    INFO("=" * 20)
+    INFO("Test data io...")
+    test_data_io(test_dir)
+    INFO("Done.")
+    INFO("=" * 20)
+
+    clean_tmp_dir(test_dir)
 
     INFO("=" * 20)
     INFO("Test transformer training...")

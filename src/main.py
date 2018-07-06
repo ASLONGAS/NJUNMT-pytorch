@@ -8,7 +8,7 @@ import torch
 import numpy as np
 from src.utils.common_utils import *
 from src.utils.logging import *
-from src.data import ZipDataset, TextDataset, DataIterator
+from src.data import ZipDataset, TextLineDataset, DataIterator
 from src.data.vocabulary import Vocabulary, _Vocabulary
 from src.metric.bleu_scorer import ExternalScriptBLEUScorer
 import src.models
@@ -344,11 +344,11 @@ def train(FLAGS):
     vocab_tgt = Vocabulary(**data_configs["vocabularies"][1])
 
     train_bitext_dataset = ZipDataset(
-        TextDataset(data_path=data_configs['train_data'][0],
+        TextLineDataset(data_path=data_configs['train_data'][0],
                     vocabulary=vocab_src,
                     max_len=data_configs['max_len'][0],
                     ),
-        TextDataset(data_path=data_configs['train_data'][1],
+        TextLineDataset(data_path=data_configs['train_data'][1],
                     vocabulary=vocab_tgt,
                     max_len=data_configs['max_len'][1],
                     ),
@@ -356,10 +356,10 @@ def train(FLAGS):
     )
 
     valid_bitext_dataset = ZipDataset(
-        TextDataset(data_path=data_configs['valid_data'][0],
+        TextLineDataset(data_path=data_configs['valid_data'][0],
                     vocabulary=vocab_src,
                     ),
-        TextDataset(data_path=data_configs['valid_data'][1],
+        TextLineDataset(data_path=data_configs['valid_data'][1],
                     vocabulary=vocab_tgt,
                     )
     )
@@ -368,7 +368,7 @@ def train(FLAGS):
                                      batch_size=training_configs['batch_size'],
                                      use_bucket=training_configs['use_bucket'],
                                      buffer_size=training_configs['buffer_size'],
-                                     batching_key=training_configs['batching_key'])
+                                     batching_func=training_configs['batching_key'])
 
     valid_iterator = DataIterator(dataset=valid_bitext_dataset,
                                   batch_size=training_configs['valid_batch_size'],
@@ -694,7 +694,7 @@ def translate(FLAGS):
     vocab_src = Vocabulary(**data_configs["vocabularies"][0])
     vocab_tgt = Vocabulary(**data_configs["vocabularies"][1])
 
-    valid_dataset = TextDataset(data_path=FLAGS.source_path,
+    valid_dataset = TextLineDataset(data_path=FLAGS.source_path,
                                 vocabulary=vocab_src)
 
     valid_iterator = DataIterator(dataset=valid_dataset,

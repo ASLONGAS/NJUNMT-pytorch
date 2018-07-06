@@ -1,3 +1,5 @@
+from typing import List, Callable
+from .dataset import Record
 import numpy as np
 import random
 
@@ -8,6 +10,51 @@ __all__ = [
 ]
 
 random.seed(GlobalNames.SEED)
+
+
+class Batch(object):
+    """
+    ```Batch``` is a list of ```Record```s which will coalesce into one batch.
+    """
+
+    __slots__ = "content"
+
+    def __init__(self, *records):
+
+        self.content = list(records)  # type: List[Record]
+
+    def unpack(self):
+        """
+        Unpack a batch into a list of records' data.
+        """
+        n_fields = self.content[0].n_fields # all the records must have the same field
+
+        outs = tuple([r.fields[ii] for r in self.content] for ii in range(n_fields))
+
+        if n_fields == 1:
+            return outs[0]
+        else:
+            return outs
+
+    @classmethod
+    def pack(cls, *records: Record) -> 'Batch':
+        """
+        Pack a list of records into a batch.
+        """
+
+        return cls(*records)
+
+def batchify(buffer: List[Record], batch_size: int, batching_func: Callable) -> List[Batch]:
+    """
+    Batchify buffer, a list of records, given a ```batching_func``` and ```batch_size```.
+    """
+    batches = []
+
+    for records in accumulate_takewhile(buffer, batch_size, batching_func):
+
+        batches.append(Batch.pack(*records))
+
+    return batches
 
 
 class accumulate_takewhile(object):
@@ -96,7 +143,7 @@ class DataIterator(object):
                  batch_size,
                  buffer_size=None,
                  use_bucket=True,
-                 batching_key="samples"):
+                 batching_func="samples"):
 
         """ Build data iterator given a dataset
 
@@ -110,11 +157,6 @@ class DataIterator(object):
         self.dataset = dataset
         self.batch_size = batch_size
 
-        if batching_key not in {"samples", "tokens"}:
-            print("Unknown batching key {0}".format(batching_key))
-            raise ValueError
-
-        self.batching_key = batching_key
 
         # Batching Key
         #
@@ -125,10 +167,13 @@ class DataIterator(object):
         # For samples, we allocate a batch according to the number of samples in it. In machine
         # translation, 50 batch size with "samples" as key means 50 bi-text sentences.
 
-        if self.batching_key == "samples":
-            self.batching_key_func = lambda line: 1
+        if batching_func == "samples":
+            self.batching_func = lambda line: 1
+        elif batching_func == "tokens":
+            self.batching_func = lambda record: record.key
         else:
-            self.batching_key_func = lambda line: max(len(l) for l in line)
+            assert callable(batching_func)
+            self.batching_func = batching_func
 
         # buffer size for bucketing
         # buffer size is the max number of batches in a buffer
@@ -158,7 +203,8 @@ class DataIterator(object):
             batch_size = self.batch_size
 
         # 1. Allocate a new buffer
-        inc_buffer = accumulate_slicewhilce(self.data_iter, self._buffer_size, key_func=self.batching_key_func)
+        inc_buffer = accumulate_slicewhilce(self.data_iter, self._buffer_size, key_func=self.batching_func)
+
 
         if len(inc_buffer) <= 0:
             # data_iter reach the end of the dataset
@@ -167,23 +213,21 @@ class DataIterator(object):
 
         # 2. Merge the residual samples in previous buffer (if any) into the inc_buffer
         if len(self.buffer) > 0:
-            new_buffer = self.buffer[0][::-1] + inc_buffer
+            new_buffer = self.buffer[0].content + inc_buffer  # type: List[Record]
         else:
-            new_buffer = inc_buffer
+            new_buffer = inc_buffer  # type: List[Record]
 
         # 3. Split buffer into batches. If ues_bucket is enable,
         # we sort the whole buffer according to the length of the sentence.
         # In order to randomize the process of batching, we add a little bit noise on the length.
 
         if self.use_bucket:
-            scores = np.array([max(len(s) for s in sample) for sample in new_buffer])
+            scores = np.array([record.key for record in new_buffer])
             noisy_scores = add_noise_to_length(scores)
             sorted_indices = np.argsort(noisy_scores).tolist()
             new_buffer = [new_buffer[i] for i in sorted_indices]
-        else:
-            new_buffer.reverse()  # First-in-first-out
 
-        new_batch_buffer = list(accumulate_takewhile(new_buffer, stop=batch_size, func=self.batching_key_func))
+        new_batch_buffer = batchify(new_buffer, batch_size=batch_size, batching_func=self.batching_func)
         del new_buffer  # release memory
 
         self.buffer = new_batch_buffer
@@ -216,18 +260,9 @@ class DataIterator(object):
             # Accumulated batches until reach the batch_size
 
             try:
-                batch_ = self.buffer.pop()
+                batch = self.buffer.pop(0)
             except IndexError:
-                break
-
-            if len(batch_) == 0:
                 self.reset()
                 break
-            else:
 
-                if self.n_datasets == 1:
-                    batch = batch_
-                else:
-                    batch = [list(d) for d in zip(*batch_)]
-
-                yield batch
+            yield batch.unpack()
