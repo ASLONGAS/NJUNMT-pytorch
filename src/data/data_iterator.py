@@ -167,7 +167,7 @@ class DataIterator(object):
 
         # 2. Merge the residual samples in previous buffer (if any) into the inc_buffer
         if len(self.buffer) > 0:
-            new_buffer = self.buffer[0] + inc_buffer
+            new_buffer = self.buffer[0][::-1] + inc_buffer
         else:
             new_buffer = inc_buffer
 
