@@ -428,10 +428,8 @@ def train(FLAGS):
     training_iterator = DataIterator(dataset=train_bitext_dataset,
                                      batch_size=train_batch_size,
                                      use_bucket=training_configs['use_bucket'],
-                                     buffer_size=training_configs['buffer_size'],
-                                     batching_func=training_configs['batching_key'])
                                      buffer_size=train_buffer_size,
-                                     batching_key=training_configs['batching_key'])
+                                     batching_func=training_configs['batching_key'])
 
     valid_iterator = DataIterator(dataset=valid_bitext_dataset,
                                   batch_size=training_configs['valid_batch_size'],
