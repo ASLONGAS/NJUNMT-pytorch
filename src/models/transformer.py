@@ -265,7 +265,7 @@ class Transformer(nn.Module):
         enc_output, enc_mask = self.encoder(src_seq)
         dec_output, _, _ = self.decoder(tgt_seq, enc_output, enc_mask)
 
-        return dec_output
+        return self.generator(dec_output)
 
     def batch_beam_search(self, src_seq, beam_size=5, max_steps=150):
 

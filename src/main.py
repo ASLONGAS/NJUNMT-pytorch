@@ -4,7 +4,9 @@ import yaml
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
+
 import torch
+import torch.nn as nn
 import numpy as np
 from src.utils.common_utils import *
 from src.utils.logging import *
@@ -145,8 +147,6 @@ def compute_forward(model,
                     seqs_y,
                     eval=False,
                     normalization=1.0,
-                    batch_dim=0,
-                    shard_size=-1,
                     n_correctness=False
                     ):
     """
@@ -168,21 +168,14 @@ def compute_forward(model,
 
     with torch.set_grad_enabled(not eval):
 
-        dec_outs = model(seqs_x, y_inp)
-
-        loss = critic(generator=model.generator,
-                      shard_size=shard_size,
-                      normalization=normalization,
-                      batch_dim=batch_dim,
-                      eval=eval,
-                      dec_outs=dec_outs,
-                      labels=y_label)
+        log_probs = model(seqs_x, y_inp)
+        loss = critic(inputs=log_probs, labels=y_label, normalization=normalization)
 
     if n_correctness:
 
         with torch.no_grad():
             mask = y_label.ne(PAD)
-            pred = model.generator(dec_outs).max(2)[1]  # [batch_size, seq_len]
+            pred = log_probs.max(2)[1]  # [batch_size, seq_len]
             num_correct = y_label.eq(pred).float().masked_select(mask).sum() / normalization
 
         return loss.item(), num_correct
@@ -609,8 +602,7 @@ def train(FLAGS):
                                        seqs_x=x,
                                        seqs_y=y,
                                        eval=False,
-                                       normalization=norm,
-                                       shard_size=-1)
+                                       normalization=norm)
             optim.step()
 
             # ================================================================================== #

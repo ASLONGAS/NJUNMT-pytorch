@@ -198,7 +198,9 @@ class DL4MT(nn.Module):
                                  hidden=dec_init,
                                  cache=dec_cache)  # [tgt_len, batch_size, dim]
 
-        return logits.transpose(1, 0).contiguous()  # Convert to batch-first mode.
+        logits = logits.transpose(1, 0).contiguous()  # Convert to batch-first mode.
+
+        return self.generator(logits)
 
     def batch_beam_search(self, x, beam_size=5, max_steps=150):
 
