@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from src.data.vocabulary import PAD
 
-class Critierion(nn.Module):
+class Criterion(nn.Module):
     """
     Class for managing efficient loss computation. Handles
     sharding next step predictions and accumulating mutiple
@@ -22,12 +22,6 @@ class Critierion(nn.Module):
         normalzation (str): normalize by "sents" or "tokens"
     """
 
-    def __init__(self, reduce=True):
-
-        super(Critierion, self).__init__()
-
-        self.reduce = reduce
-
     def _compute_loss(self, inputs, labels, **kwargs):
         """
         Compute the loss. Subclass must define this method.
@@ -40,34 +34,34 @@ class Critierion(nn.Module):
         raise NotImplementedError
 
 
-    def forward(self, inputs, labels, normalization=1.0, **kwargs):
+    def forward(self, inputs, labels, normalization=1.0, reduce=True, **kwargs):
 
         loss = self._compute_loss(inputs, labels, **kwargs).div(normalization)  # (batch, )
 
-        if self.reduce:
+        if reduce:
             loss = loss.sum()
 
         return loss
 
 
-class NMTCritierion(Critierion):
+class NMTCriterion(Criterion):
     """
     TODO:
     1. Add label smoothing
     """
     def __init__(self, padding_idx=PAD, label_smoothing=0.0, reduce=True):
 
-        super().__init__(reduce=reduce)
+        super().__init__()
 
         self.padding_idx = padding_idx
         self.label_smoothing = label_smoothing
 
         if label_smoothing > 0:
 
-            self.criterion = nn.KLDivLoss(size_average=False)
+            self.criterion = nn.KLDivLoss(size_average=False, reduce=False)
 
         else:
-            self.criterion = nn.NLLLoss(size_average=False, ignore_index=PAD)
+            self.criterion = nn.NLLLoss(size_average=False, ignore_index=PAD, reduce=False)
 
         self.confidence = 1.0 - label_smoothing
 

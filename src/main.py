@@ -90,6 +90,10 @@ def split_shard(*inputs, split_size=-1):
 
         # split shards
         total_batch = sorted_indices.shape[0] # total number of batches
+
+        if split_size >= total_batch:
+            yield inputs
+
         shard_size = total_batch // split_size
 
         _indices = list(range(total_batch))[::shard_size] + [total_batch]
@@ -170,6 +174,9 @@ def compute_forward(model,
 
         log_probs = model(seqs_x, y_inp)
         loss = critic(inputs=log_probs, labels=y_label, normalization=normalization)
+
+    if not eval:
+        torch.autograd.backward(loss)
 
     if n_correctness:
 
