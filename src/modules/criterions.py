@@ -24,18 +24,30 @@ class Criterion(nn.Module):
 
     def _compute_loss(self, inputs, labels, **kwargs):
         """
-        Compute the loss. Subclass must define this method.
+        Compute the loss. Subclass must override this method.
 
         Args:
             output: the predict output from the model.
             target: the validate target to compare output with.
             **kwargs(optional): additional info for computing loss.
+        Returns:
+            A non-reduced FloatTensor with shape (batch, )
         """
         raise NotImplementedError
 
 
     def forward(self, inputs, labels, normalization=1.0, reduce=True, **kwargs):
+        """
+        Compute loss given inputs and labels.
 
+        Args:
+            inputs: Input tensor of the criterion.
+            labels: Label tensor of the criterion.
+            reduce: Boolean value indicate whether the criterion should reduce the loss along the batch. If false,
+                the criterion return a FloatTensor with shape (batch, ), otherwise a scalar.
+            normalization: Normalization factor of the loss. Should be a float scalar or a FloatTensor with shape
+                (batch, )
+        """
         loss = self._compute_loss(inputs, labels, **kwargs).div(normalization)  # (batch, )
 
         if reduce:
@@ -91,6 +103,8 @@ class NMTCriterion(Criterion):
             labels (...,): Index tensor. Should be the same size as inputs except the last dimension.
         """
 
+        batch_size = labels.size(0)
+
         scores = self._bottle(inputs) # [batch_size * seq_len, d_words]
 
         num_tokens = scores.size(-1)
@@ -116,6 +130,6 @@ class NMTCriterion(Criterion):
                 tmp_.index_fill_(0, mask, 0)
             gtruth = tmp_.detach()
 
-        loss = self.criterion(scores, gtruth)
+        loss = self.criterion(scores, gtruth).view((batch_size, -1)).sum(-1)
 
         return loss
