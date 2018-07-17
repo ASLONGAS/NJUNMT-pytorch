@@ -12,8 +12,7 @@ from src.utils.logging import *
 from src.data import ZipDataset, TextLineDataset, DataIterator
 from src.data.vocabulary import Vocabulary, _Vocabulary
 from src.metric.bleu_scorer import ExternalScriptBLEUScorer
-import src.models
-from src.models import *
+from src.models import build_model
 from src.modules.criterions import NMTCriterion
 from src.utils.optim import Optimizer
 from src.utils.lr_scheduler import LossScheduler, NoamScheduler
@@ -94,13 +93,13 @@ def split_shard(*inputs, split_size=-1):
 
         if split_size >= total_batch:
             yield inputs
+        else:
+            shard_size = total_batch // split_size
 
-        shard_size = total_batch // split_size
+            _indices = list(range(total_batch))[::shard_size] + [total_batch]
 
-        _indices = list(range(total_batch))[::shard_size] + [total_batch]
-
-        for beg, end in zip(_indices[:-1], _indices[1:]):
-            yield (inp[beg:end] for inp in inputs)
+            for beg, end in zip(_indices[:-1], _indices[1:]):
+                yield (inp[beg:end] for inp in inputs)
 
 
 def save_checkpoints(saveto_prefix,
@@ -109,7 +108,8 @@ def save_checkpoints(saveto_prefix,
                      optim: Optimizer,
                      max_keeps=1,
                      **kwargs):
-    """
+    """ Saving checkpoints
+
     Checkpoints will be saved as such format:
         saveto_prefix.ckpt.[global_step].model
         saveto_prefix.ckpt.[global_step].optim
@@ -153,6 +153,8 @@ def save_checkpoints(saveto_prefix,
 
 
 def reload_from_latest_checkpoint(saveto_prefix, model: nn.Module, optim: Optimizer):
+    """Restore from latest checkpoint
+    """
     ckpt_list = saveto_prefix + ".checkpoints"
 
     if not os.path.exists(ckpt_list):
@@ -221,12 +223,12 @@ def compute_forward(model,
                     seqs_y,
                     eval=False,
                     normalization=1.0,
-                    n_correctness=False
+                    norm_by_words=False
                     ):
     """
     :type model: nn.Module
 
-    :type critic: NMTCritierion
+    :type critic: NMTCriterion
     """
 
     if eval:
@@ -239,23 +241,28 @@ def compute_forward(model,
     y_inp = seqs_y[:, :-1].contiguous()
     y_label = seqs_y[:, 1:].contiguous()
 
-    with torch.set_grad_enabled(not eval):
-
-        log_probs = model(seqs_x, y_inp)
-        loss = critic(inputs=log_probs, labels=y_label, normalization=normalization)
+    words_norm = y_label.ne(PAD).float().sum(1)
 
     if not eval:
+        # For training
+        with torch.enable_grad():
+            log_probs = model(seqs_x, y_inp)
+            loss = critic(inputs=log_probs, labels=y_label, reduce=False, normalization=normalization)
+
+            if norm_by_words:
+                loss = loss.div(words_norm).sum()
+            else:
+                loss = loss.sum()
+
         torch.autograd.backward(loss)
 
-    if n_correctness:
+        return loss.detach().item()
+    else:
+        # For compute loss
         with torch.no_grad():
-            mask = y_label.ne(PAD)
-            pred = log_probs.max(2)[1]  # [batch_size, seq_len]
-            num_correct = y_label.eq(pred).float().masked_select(mask).sum() / normalization
-
-        return loss.item(), num_correct
-
-    return loss.item()
+            log_probs = model(seqs_x, y_inp)
+            loss = critic(inputs=log_probs, labels=y_label, normalization=normalization)
+        return loss.item()
 
 
 def loss_validation(model, critic, valid_iterator):
@@ -271,7 +278,6 @@ def loss_validation(model, critic, valid_iterator):
     n_tokens = 0.0
 
     sum_loss = 0.0
-    sum_correct = 0.0
 
     valid_iter = valid_iterator.build_generator()
 
@@ -283,19 +289,18 @@ def loss_validation(model, critic, valid_iterator):
 
         x, y = prepare_data(seqs_x, seqs_y, cuda=GlobalNames.USE_GPU)
 
-        loss, num_correct = compute_forward(model=model,
-                                            critic=critic,
-                                            seqs_x=x,
-                                            seqs_y=y,
-                                            eval=True, n_correctness=True)
+        loss = compute_forward(model=model,
+                               critic=critic,
+                               seqs_x=x,
+                               seqs_y=y,
+                               eval=True)
 
         if np.any(np.isnan(loss)):
             WARN("NaN detected!")
 
         sum_loss += float(loss)
-        sum_correct += num_correct
 
-    return float(sum_loss / n_sents), float(sum_correct * 1.0 / n_tokens)
+    return float(sum_loss / n_sents)
 
 
 def bleu_validation(uidx,
@@ -408,14 +413,11 @@ def load_pretrained_model(nmt_model, pretrain_path, map_dict=None, exclude_prefi
 
 
 def default_configs(configs):
-    if "norm_by_words" not in configs["training_configs"]:
-        configs["training_configs"]["norm_by_words"] = False
+    configs["training_configs"].setdefault("norm_by_words", False)
 
-    if "buffer_size" not in configs["training_configs"]:
-        configs["training_configs"]["buffer_size"] = 100 * configs["training_configs"]["batch_size"]
+    configs["training_configs"].setdefault("buffer_size", 20 * configs["training_configs"]["batch_size"])
 
-    if "bleu_valid_max_steps" not in configs["training_configs"]:
-        configs["training_configs"]["bleu_valid_max_steps"] = 150
+    configs["training_configs"].setdefault("bleu_valid_max_steps", 150)
 
     return configs
 
@@ -439,10 +441,8 @@ def train(FLAGS):
     config_path = os.path.abspath(FLAGS.config_path)
     with open(config_path.strip()) as f:
         configs = yaml.load(f)
-
     # Add default configs
     configs = default_configs(configs)
-
     data_configs = configs['data_configs']
     model_configs = configs['model_configs']
     optimizer_configs = configs['optimizer_configs']
@@ -517,15 +517,8 @@ def train(FLAGS):
     # Build Model & Sampler & Validation
     INFO('Building model...')
     timer.tic()
-
-    model_cls = model_configs.get("model")
-    if model_cls not in src.models.__all__:
-        raise ValueError(
-            "Invalid model class \'{}\' provided. Only {} are supported now.".format(
-                model_cls, src.models.__all__))
-
-    nmt_model = eval(model_cls)(n_src_vocab=vocab_src.max_n_words,
-                                n_tgt_vocab=vocab_tgt.max_n_words, **model_configs)
+    nmt_model = build_model(model_configs["model"], n_src_vocab=vocab_src.max_n_words,
+                            n_tgt_vocab=vocab_tgt.max_n_words, **model_configs)
     INFO(nmt_model)
 
     critic = NMTCriterion(label_smoothing=model_configs['label_smoothing'])
@@ -645,7 +638,7 @@ def train(FLAGS):
                                        seqs_x=x,
                                        seqs_y=y,
                                        eval=False,
-                                       normalization=norm)
+                                       normalization=norm, norm_by_words=training_configs["norm_by_words"])
             optim.step()
 
             # ================================================================================== #
@@ -677,10 +670,10 @@ def train(FLAGS):
             if should_trigger_by_steps(global_step=uidx, n_epoch=eidx,
                                        every_n_step=training_configs['loss_valid_freq'], debug=FLAGS.debug):
 
-                valid_loss, valid_n_correct = loss_validation(model=nmt_model,
-                                                              critic=critic,
-                                                              valid_iterator=valid_iterator,
-                                                              )
+                valid_loss = loss_validation(model=nmt_model,
+                                             critic=critic,
+                                             valid_iterator=valid_iterator,
+                                             )
 
                 collections.add_to_collection("history_losses", valid_loss)
 
@@ -688,7 +681,6 @@ def train(FLAGS):
 
                 summary_writer.add_scalar("loss", valid_loss, global_step=uidx)
                 summary_writer.add_scalar("best_loss", min_history_loss, global_step=uidx)
-                summary_writer.add_scalar("n_correct", valid_n_correct, global_step=uidx)
 
                 # If no bess loss model saved, save it.
                 if len(collections.get_collection("history_losses")) == 0 or params_best_loss is None:
@@ -751,6 +743,12 @@ def train(FLAGS):
 
         training_progress_bar.close()
 
+        INFO("Saving checkpints at the end of epoch...")
+        collections.add_to_collection("uidx", uidx)
+        collections.add_to_collection("bad_count", bad_count)
+        save_checkpoints(saveto_prefix=os.path.join(FLAGS.saveto, FLAGS.model_name),
+                         global_step=uidx, model=nmt_model, optim=optim, max_keeps=1)
+
 
 def translate(FLAGS):
     GlobalNames.USE_GPU = FLAGS.use_gpu
@@ -787,16 +785,8 @@ def translate(FLAGS):
     # Build Model & Sampler & Validation
     INFO('Building model...')
     timer.tic()
-
-    model_cls = model_configs.get("model")
-    if model_cls not in src.models.__all__:
-        raise ValueError(
-            "Invalid model class \'{}\' provided. Only {} are supported now.".format(
-                model_cls, src.models.__all__))
-
-    nmt_model = eval(model_cls)(n_src_vocab=vocab_src.max_n_words,
-                                n_tgt_vocab=vocab_tgt.max_n_words, **model_configs)
-
+    nmt_model = build_model(model_configs["model"], n_src_vocab=vocab_src.max_n_words,
+                            n_tgt_vocab=vocab_tgt.max_n_words, **model_configs)
     nmt_model.eval()
     INFO('Done. Elapsed time {0}'.format(timer.toc()))
 

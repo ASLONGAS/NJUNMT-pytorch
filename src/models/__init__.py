@@ -22,3 +22,14 @@ from .transformer import Transformer
 from .dl4mt import DL4MT
 
 
+
+def build_model(model: str, **kwargs):
+
+    if model not in __all__:
+        raise ValueError(
+            "Invalid model class \'{}\' provided. Only {} are supported now.".format(
+                model, __all__))
+
+    return __all__[model](**kwargs)
+
+
