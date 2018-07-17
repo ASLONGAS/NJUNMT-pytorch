@@ -11,7 +11,6 @@ __all__ = [
     'batch_open',
     'GlobalNames',
     'Timer',
-    'Collections',
     'sequence_mask',
     'build_vocab_shortlist',
     'to_gpu'
@@ -77,81 +76,6 @@ class Timer(object):
             return '%d:%02d' % (m, s)
         h, m = divmod(m, 60)
         return '%d:%02d:%02d' % (h, m, s)
-
-
-class Collections(object):
-    """Collections for logs during training.
-
-    Usually we add loss and valid metrics to some collections after some steps.
-    """
-    _MY_COLLECTIONS_NAME = "my_collections"
-
-    def __init__(self, kv_stores=None, name=None):
-
-        self._kv_stores = kv_stores if kv_stores is not None else {}
-
-        if name is None:
-            name = Collections._MY_COLLECTIONS_NAME
-        self._name = name
-
-    def load(self, archives):
-
-        if self._name in archives:
-            self._kv_stores = archives[self._name]
-        else:
-            self._kv_stores = []
-
-    def add_to_collection(self, key, value):
-        """
-        Add value to collection
-
-        :type key: str
-        :param key: Key of the collection
-
-        :param value: The value which is appended to the collection
-        """
-        if key not in self._kv_stores:
-            self._kv_stores[key] = [value]
-        else:
-            self._kv_stores[key].append(value)
-
-    def export(self):
-        return {self._name: self._kv_stores}
-
-    def get_collection(self, key):
-        """
-        Get the collection given a key
-
-        :type key: str
-        :param key: Key of the collection
-        """
-        if key not in self._kv_stores:
-            return []
-        else:
-            return self._kv_stores[key]
-
-    @staticmethod
-    def pickle(path, **kwargs):
-        """
-        :type path: str
-        """
-        archives_ = dict([(k, v) for k, v in kwargs.items()])
-
-        if not path.endswith(".pkl"):
-            path = path + ".pkl"
-
-        with open(path, 'wb') as f:
-            pkl.dump(archives_, f)
-
-    @staticmethod
-    def unpickle(path):
-        """:type path: str"""
-
-        with open(path, 'rb') as f:
-            archives_ = pkl.load(f)
-
-        return archives_
-
 
 def sequence_mask(seqs_length):
     maxlen = np.max(seqs_length)

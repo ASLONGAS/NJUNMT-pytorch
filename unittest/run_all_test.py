@@ -2,6 +2,7 @@ import os
 import subprocess
 from src.utils.logging import INFO
 
+
 # configure_list = [
 #     "./unittest/configs/test_transformer.yaml"
 # ]
@@ -9,11 +10,14 @@ from src.utils.logging import INFO
 def get_model_name(path):
     return os.path.basename(path).strip().split(".")[0]
 
+
 def clean_tmp_dir(path):
     subprocess.run("rm -rf {0}/*".format(path), shell=True)
 
+
 def rm_tmp_dir(path):
     subprocess.run("rm -rf {0}".format(path), shell=True)
+
 
 def test_data_io(test_dir):
     import yaml
@@ -34,7 +38,7 @@ def test_data_io(test_dir):
     test_data_real = [line.strip().split() for line in test_data_real]
 
     test_dataset = TextLineDataset(data_path=data_configs["train_data"][0],
-                                vocabulary=vocab_src)
+                                   vocabulary=vocab_src)
 
     test_iterator = DataIterator(dataset=test_dataset,
                                  batch_size=3,
@@ -51,6 +55,7 @@ def test_data_io(test_dir):
         print("The order of data io is broken!")
         exit(1)
 
+
 def test_transformer_train(test_dir):
     from src.bin import train
 
@@ -62,11 +67,14 @@ def test_transformer_train(test_dir):
     valid_path = os.path.join(test_dir, "valid")
 
     train.run(model_name=model_name,
-               config_path=config_path,
-               saveto=saveto,
-               log_path=log_path,
-               valid_path=valid_path,
-               debug=True)
+              config_path=config_path,
+              saveto=saveto,
+              log_path=log_path,
+              valid_path=valid_path,
+              debug=True,
+              reload=True,
+              use_gpu=True)
+
 
 def test_transformer_inference(test_dir):
     from src.bin import translate
@@ -90,8 +98,8 @@ def test_transformer_inference(test_dir):
                   saveto=saveto,
                   max_steps=20)
 
-def test_dl4mt_train(test_dir):
 
+def test_dl4mt_train(test_dir):
     from src.bin import train
 
     config_path = "./unittest/configs/test_dl4mt.yaml"
@@ -102,11 +110,12 @@ def test_dl4mt_train(test_dir):
     valid_path = os.path.join(test_dir, "valid")
 
     train.run(model_name=model_name,
-               config_path=config_path,
-               saveto=saveto,
-               log_path=log_path,
-               valid_path=valid_path,
-               debug=True)
+              config_path=config_path,
+              saveto=saveto,
+              log_path=log_path,
+              valid_path=valid_path,
+              debug=True)
+
 
 def test_dl4mt_inference(test_dir):
     from src.bin import translate
@@ -131,8 +140,8 @@ def test_dl4mt_inference(test_dir):
                   saveto=saveto,
                   max_steps=20)
 
-def test_all():
 
+def test_all():
     test_dir = "./tmp"
 
     if not os.path.exists(test_dir):
@@ -158,6 +167,12 @@ def test_all():
     INFO("Done.")
     INFO("=" * 20)
 
+    INFO("=" * 20)
+    INFO("Test transformer reload...")
+    test_transformer_train(test_dir)
+    INFO("Done.")
+    INFO("=" * 20)
+
     clean_tmp_dir(test_dir)
 
     INFO("=" * 20)
@@ -173,6 +188,7 @@ def test_all():
     INFO("=" * 20)
 
     rm_tmp_dir(test_dir)
+
 
 if __name__ == "__main__":
     test_all()

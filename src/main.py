@@ -4,7 +4,6 @@ import yaml
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-
 import torch
 import torch.nn as nn
 import numpy as np
@@ -18,6 +17,7 @@ from src.models import *
 from src.modules.criterions import NMTCriterion
 from src.utils.optim import Optimizer
 from src.utils.lr_scheduler import LossScheduler, NoamScheduler
+from src.utils import collections
 
 # Fix random seed
 torch.manual_seed(GlobalNames.SEED)
@@ -47,6 +47,7 @@ def _min_cond_to_trigger(global_step, n_epoch, min_step=-1):
         else:
             return False
 
+
 def should_trigger_by_steps(global_step,
                             n_epoch,
                             every_n_step,
@@ -72,13 +73,13 @@ def should_trigger_by_steps(global_step,
         else:
             return False
 
-def split_shard(*inputs, split_size=-1):
 
+def split_shard(*inputs, split_size=-1):
     if split_size <= 0:
         yield inputs
     else:
 
-        lengths = [len(s) for s in inputs[-1]] #
+        lengths = [len(s) for s in inputs[-1]]  #
         sorted_indices = np.argsort(lengths)
 
         # sorting inputs
@@ -89,7 +90,7 @@ def split_shard(*inputs, split_size=-1):
         ]
 
         # split shards
-        total_batch = sorted_indices.shape[0] # total number of batches
+        total_batch = sorted_indices.shape[0]  # total number of batches
 
         if split_size >= total_batch:
             yield inputs
@@ -100,6 +101,75 @@ def split_shard(*inputs, split_size=-1):
 
         for beg, end in zip(_indices[:-1], _indices[1:]):
             yield (inp[beg:end] for inp in inputs)
+
+
+def save_checkpoints(saveto_prefix,
+                     global_step,
+                     model: nn.Module,
+                     optim: Optimizer,
+                     max_keeps=1,
+                     **kwargs):
+    """
+    Checkpoints will be saved as such format:
+        saveto_prefix.ckpt.[global_step].model
+        saveto_prefix.ckpt.[global_step].optim
+        saveto_prefix.ckpt.[global_step].collections
+    """
+    saveto_dir = os.path.dirname(saveto_prefix)
+
+    if not os.path.exists(saveto_dir):
+        os.mkdir(saveto_dir)
+
+    ckpt_list = saveto_prefix + ".checkpoints"
+
+    saveto_prefix = saveto_prefix + ".ckpt." + str(global_step)
+
+    model_path = saveto_prefix + ".model"
+    optim_path = saveto_prefix + ".optim"
+    collections_path = saveto_prefix + ".collections"
+
+    torch.save(model.state_dict(), model_path)
+    torch.save(optim.optim.state_dict(), optim_path)
+    collections.save(collections_path)
+
+    # Delete
+    if not os.path.exists(ckpt_list):
+        with open(ckpt_list, "w") as f:
+            f.write(saveto_prefix + "\n")
+    else:
+        with open(ckpt_list, "r") as f:
+            saved_ckpt_list = f.readlines()
+        with open(ckpt_list, "w") as f:
+            f.write(saveto_prefix + "\n")
+            for ii in range(len(saved_ckpt_list)):
+                if ii < max_keeps - 1:
+                    f.write(saved_ckpt_list[ii])
+                else:
+                    # remove out-dated checkpoint files
+                    for root, dirs, files in os.walk(saveto_dir):
+                        for file in files:
+                            if saveto_prefix in file:
+                                os.remove(os.path.join(root, file))
+
+
+def reload_from_latest_checkpoint(saveto_prefix, model: nn.Module, optim: Optimizer):
+    ckpt_list = saveto_prefix + ".checkpoints"
+
+    if not os.path.exists(ckpt_list):
+        INFO("No checkpoint files found.")
+        return
+
+    with open(ckpt_list) as f:
+        latest_ckpt_prefix = f.readlines()[0].strip()
+
+    model_path = latest_ckpt_prefix + ".model"
+    optim_path = latest_ckpt_prefix + ".optim"
+    collections_path = latest_ckpt_prefix + ".collections"
+
+    model.load_state_dict(torch.load(model_path))
+    optim.optim.load_state_dict(torch.load(optim_path))
+    collections.load(collections_path)
+
 
 def prepare_data(seqs_x, seqs_y=None, cuda=False, batch_first=True):
     """
@@ -159,7 +229,6 @@ def compute_forward(model,
     :type critic: NMTCritierion
     """
 
-
     if eval:
         model.eval()
         critic.eval()
@@ -179,7 +248,6 @@ def compute_forward(model,
         torch.autograd.backward(loss)
 
     if n_correctness:
-
         with torch.no_grad():
             mask = y_label.ne(PAD)
             pred = log_probs.max(2)[1]  # [batch_size, seq_len]
@@ -340,7 +408,6 @@ def load_pretrained_model(nmt_model, pretrain_path, map_dict=None, exclude_prefi
 
 
 def default_configs(configs):
-
     if "norm_by_words" not in configs["training_configs"]:
         configs["training_configs"]["norm_by_words"] = False
 
@@ -351,6 +418,7 @@ def default_configs(configs):
         configs["training_configs"]["bleu_valid_max_steps"] = 150
 
     return configs
+
 
 def train(FLAGS):
     """
@@ -384,10 +452,7 @@ def train(FLAGS):
         # Set random seed
         GlobalNames.SEED = training_configs['seed']
 
-    saveto_collections = '%s.pkl' % os.path.join(FLAGS.saveto, FLAGS.model_name + GlobalNames.MY_CHECKPOINIS_PREFIX)
     saveto_best_model = os.path.join(FLAGS.saveto, FLAGS.model_name + GlobalNames.MY_BEST_MODEL_SUFFIX)
-    saveto_best_optim_params = os.path.join(FLAGS.saveto,
-                                            FLAGS.model_name + GlobalNames.MY_BEST_OPTIMIZER_PARAMS_SUFFIX)
 
     timer = Timer()
 
@@ -406,23 +471,23 @@ def train(FLAGS):
 
     train_bitext_dataset = ZipDataset(
         TextLineDataset(data_path=data_configs['train_data'][0],
-                    vocabulary=vocab_src,
-                    max_len=data_configs['max_len'][0],
-                    ),
+                        vocabulary=vocab_src,
+                        max_len=data_configs['max_len'][0],
+                        ),
         TextLineDataset(data_path=data_configs['train_data'][1],
-                    vocabulary=vocab_tgt,
-                    max_len=data_configs['max_len'][1],
-                    ),
+                        vocabulary=vocab_tgt,
+                        max_len=data_configs['max_len'][1],
+                        ),
         shuffle=training_configs['shuffle']
     )
 
     valid_bitext_dataset = ZipDataset(
         TextLineDataset(data_path=data_configs['valid_data'][0],
-                    vocabulary=vocab_src,
-                    ),
+                        vocabulary=vocab_src,
+                        ),
         TextLineDataset(data_path=data_configs['valid_data'][1],
-                    vocabulary=vocab_tgt,
-                    )
+                        vocabulary=vocab_tgt,
+                        )
     )
 
     training_iterator = DataIterator(dataset=train_bitext_dataset,
@@ -444,8 +509,6 @@ def train(FLAGS):
                                            )
 
     INFO('Done. Elapsed time {0}'.format(timer.toc()))
-
-    model_collections = Collections()
 
     lrate = optimizer_configs['learning_rate']
     is_early_stop = False
@@ -478,45 +541,18 @@ def train(FLAGS):
                       optim_args=optimizer_configs['optimizer_params']
                       )
 
-    # Initialize training indicators
-    uidx = 0
-    bad_count = 0
-
-    # Whether Reloading model
-    if FLAGS.reload is True and os.path.exists(saveto_best_model):
-        timer.tic()
-        INFO("Reloading model...")
-        params = torch.load(saveto_best_model)
-        nmt_model.load_state_dict(params)
-
-        model_archives = Collections.unpickle(path=saveto_collections)
-        model_collections.load(archives=model_archives)
-
-        uidx = model_archives['uidx']
-        bad_count = model_archives['bad_count']
-
-        INFO("Done. Model reloaded.")
-
-        if os.path.exists(saveto_best_optim_params):
-            INFO("Reloading optimizer params...")
-            optimizer_params = torch.load(saveto_best_optim_params)
-            optim.optim.load_state_dict(optimizer_params)
-
-            INFO("Done. Optimizer params reloaded.")
-        elif uidx > 0:
-            INFO("Failed to reload optimizer params: {} does not exist".format(
-                saveto_best_optim_params))
-
-        INFO('Done. Elapsed time {0}'.format(timer.toc()))
-    # New training. Check if pretraining needed
-    else:
-        # pretrain
-        load_pretrained_model(nmt_model, FLAGS.pretrain_path, exclude_prefix=None)
-
     if GlobalNames.USE_GPU:
         nmt_model = nmt_model.cuda()
         critic = critic.cuda()
 
+    # Load pretrain model
+    load_pretrained_model(nmt_model, FLAGS.pretrain_path, exclude_prefix=None)
+
+    # Whether Reloading model
+    if FLAGS.reload:
+        reload_from_latest_checkpoint(saveto_prefix=os.path.join(FLAGS.saveto, FLAGS.model_name),
+                                      model=nmt_model,
+                                      optim=optim)
     # Configure Learning Scheduler
     # Here we have two policies, "loss" and "noam"
 
@@ -525,7 +561,7 @@ def train(FLAGS):
         if optimizer_configs['schedule_method'] == "loss":
 
             scheduler = LossScheduler(optimizer=optim, **optimizer_configs['scheduler_configs']
-                                  )
+                                      )
 
         elif optimizer_configs['schedule_method'] == "noam":
             scheduler = NoamScheduler(optimizer=optim, **optimizer_configs['scheduler_configs'])
@@ -539,6 +575,8 @@ def train(FLAGS):
 
     # ================================================================================== #
     # Prepare training
+    uidx = collections.get_collection("uidx", 0)[-1]
+    bad_count = collections.get_collection("bad_count", 0)[-1]
 
     params_best_loss = None
 
@@ -547,7 +585,6 @@ def train(FLAGS):
     cum_samples = 0
     cum_words = 0
     valid_loss = 1.0 * 1e12  # Max Float
-    saving_files = []
 
     # Timer for computing speed
     timer_for_speed = Timer()
@@ -600,7 +637,6 @@ def train(FLAGS):
             nmt_model.zero_grad()
 
             for seqs_x_t, seqs_y_t in split_shard(seqs_x, seqs_y, split_size=training_configs['update_cycle']):
-
                 # Prepare data
                 x, y = prepare_data(seqs_x_t, seqs_y_t, cuda=GlobalNames.USE_GPU)
 
@@ -630,32 +666,11 @@ def train(FLAGS):
             # Saving checkpoints
             if should_trigger_by_steps(uidx, eidx, every_n_step=training_configs['save_freq'],
                                        debug=FLAGS.debug):
+                collections.add_to_collection("uidx", uidx)
+                collections.add_to_collection("bad_count", bad_count)
 
-                if not os.path.exists(FLAGS.saveto):
-                    os.mkdir(FLAGS.saveto)
-
-                INFO('Saving the model at iteration {}...'.format(uidx))
-
-                if not os.path.exists(FLAGS.saveto):
-                    os.mkdir(FLAGS.saveto)
-
-                saveto_uidx = os.path.join(FLAGS.saveto, FLAGS.model_name + '.iter%d.tpz' % uidx)
-                torch.save(nmt_model.state_dict(), saveto_uidx)
-
-                Collections.pickle(path=saveto_collections,
-                                   uidx=uidx,
-                                   bad_count=bad_count,
-                                   **model_collections.export())
-
-                saving_files.append(saveto_uidx)
-
-                INFO('Done')
-
-                if len(saving_files) > 5:
-                    for f in saving_files[:-1]:
-                        os.remove(f)
-
-                    saving_files = [saving_files[-1]]
+                save_checkpoints(saveto_prefix=os.path.join(FLAGS.saveto, FLAGS.model_name),
+                                 global_step=uidx, model=nmt_model, optim=optim, max_keeps=1)
 
             # ================================================================================== #
             # Loss Validation & Learning rate annealing
@@ -667,16 +682,16 @@ def train(FLAGS):
                                                               valid_iterator=valid_iterator,
                                                               )
 
-                model_collections.add_to_collection("history_losses", valid_loss)
+                collections.add_to_collection("history_losses", valid_loss)
 
-                min_history_loss = np.array(model_collections.get_collection("history_losses")).min()
+                min_history_loss = np.array(collections.get_collection("history_losses")).min()
 
                 summary_writer.add_scalar("loss", valid_loss, global_step=uidx)
                 summary_writer.add_scalar("best_loss", min_history_loss, global_step=uidx)
                 summary_writer.add_scalar("n_correct", valid_n_correct, global_step=uidx)
 
                 # If no bess loss model saved, save it.
-                if len(model_collections.get_collection("history_losses")) == 0 or params_best_loss is None:
+                if len(collections.get_collection("history_losses")) == 0 or params_best_loss is None:
                     params_best_loss = nmt_model.state_dict()
 
                 if valid_loss <= min_history_loss:
@@ -690,7 +705,6 @@ def train(FLAGS):
                                        min_step=training_configs['bleu_valid_warmup'],
                                        debug=FLAGS.debug):
 
-
                 valid_bleu = bleu_validation(uidx=uidx,
                                              valid_iterator=valid_iterator,
                                              batch_size=training_configs['bleu_valid_batch_size'],
@@ -702,9 +716,9 @@ def train(FLAGS):
                                              max_steps=training_configs["bleu_valid_max_steps"]
                                              )
 
-                model_collections.add_to_collection(key="history_bleus", value=valid_bleu)
+                collections.add_to_collection(key="history_bleus", value=valid_bleu)
 
-                best_valid_bleu = float(np.array(model_collections.get_collection("history_bleus")).max())
+                best_valid_bleu = float(np.array(collections.get_collection("history_bleus")).max())
 
                 summary_writer.add_scalar("bleu", valid_bleu, uidx)
                 summary_writer.add_scalar("best_bleu", best_valid_bleu, uidx)
@@ -715,16 +729,9 @@ def train(FLAGS):
 
                     if is_early_stop is False:
                         INFO('Saving best model...')
-
                         # save model
                         best_params = nmt_model.state_dict()
                         torch.save(best_params, saveto_best_model)
-
-                        # save optim params
-                        INFO('Saving best optimizer params...')
-                        best_optim_params = optim.optim.state_dict()
-                        torch.save(best_optim_params, saveto_best_optim_params)
-
                         INFO('Done.')
 
                 else:
@@ -768,7 +775,7 @@ def translate(FLAGS):
     vocab_tgt = Vocabulary(**data_configs["vocabularies"][1])
 
     valid_dataset = TextLineDataset(data_path=FLAGS.source_path,
-                                vocabulary=vocab_src)
+                                    vocabulary=vocab_src)
 
     valid_iterator = DataIterator(dataset=valid_dataset,
                                   batch_size=FLAGS.batch_size,
