@@ -141,15 +141,9 @@ def save_checkpoints(saveto_prefix,
             saved_ckpt_list = f.readlines()
         with open(ckpt_list, "w") as f:
             f.write(saveto_prefix + "\n")
-            for ii in range(len(saved_ckpt_list)):
-                if ii < max_keeps - 1:
-                    f.write(saved_ckpt_list[ii])
-                else:
-                    # remove out-dated checkpoint files
-                    for root, dirs, files in os.walk(saveto_dir):
-                        for file in files:
-                            if saveto_prefix in file:
-                                os.remove(os.path.join(root, file))
+            if len(saved_ckpt_list) + 1 > max_keeps:
+                for item in saved_ckpt_list[:-1]:
+                    f.write(item)
 
 
 def reload_from_latest_checkpoint(saveto_prefix, model: nn.Module, optim: Optimizer):
@@ -663,7 +657,8 @@ def train(FLAGS):
                 collections.add_to_collection("bad_count", bad_count)
 
                 save_checkpoints(saveto_prefix=os.path.join(FLAGS.saveto, FLAGS.model_name),
-                                 global_step=uidx, model=nmt_model, optim=optim, max_keeps=1)
+                                 global_step=uidx, model=nmt_model, optim=optim,
+                                 max_keeps=training_configs["keep_checkpoint_max"])
 
             # ================================================================================== #
             # Loss Validation & Learning rate annealing
@@ -696,7 +691,6 @@ def train(FLAGS):
                                        every_n_step=training_configs['bleu_valid_freq'],
                                        min_step=training_configs['bleu_valid_warmup'],
                                        debug=FLAGS.debug):
-
                 valid_bleu = bleu_validation(uidx=uidx,
                                              valid_iterator=valid_iterator,
                                              batch_size=training_configs['bleu_valid_batch_size'],
