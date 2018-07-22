@@ -1,11 +1,12 @@
 import os
 import subprocess
+import argparse
 from src.utils.logging import INFO
 
 
-# configure_list = [
-#     "./unittest/configs/test_transformer.yaml"
-# ]
+parser = argparse.ArgumentParser()
+parser.add_argument("--use_gpu", action="store_true",
+                    help="Test on GPU. Default is disable.")
 
 def get_model_name(path):
     return os.path.basename(path).strip().split(".")[0]
@@ -56,7 +57,7 @@ def test_data_io(test_dir):
         exit(1)
 
 
-def test_transformer_train(test_dir):
+def test_transformer_train(test_dir, use_gpu=False):
     from src.bin import train
 
     config_path = "./unittest/configs/test_transformer.yaml"
@@ -73,10 +74,10 @@ def test_transformer_train(test_dir):
               valid_path=valid_path,
               debug=True,
               reload=True,
-              use_gpu=True)
+              use_gpu=use_gpu)
 
 
-def test_transformer_inference(test_dir):
+def test_transformer_inference(test_dir, use_gpu=False):
     from src.bin import translate
     from src.utils.common_utils import GlobalNames
     config_path = "./unittest/configs/test_transformer.yaml"
@@ -93,13 +94,13 @@ def test_transformer_inference(test_dir):
                   batch_size=batch_size,
                   beam_size=beam_size,
                   model_path=model_path,
-                  use_gpu=False,
+                  use_gpu=use_gpu,
                   config_path=config_path,
                   saveto=saveto,
                   max_steps=20)
 
 
-def test_dl4mt_train(test_dir):
+def test_dl4mt_train(test_dir, use_gpu=False):
     from src.bin import train
 
     config_path = "./unittest/configs/test_dl4mt.yaml"
@@ -114,10 +115,11 @@ def test_dl4mt_train(test_dir):
               saveto=saveto,
               log_path=log_path,
               valid_path=valid_path,
-              debug=True)
+              debug=True,
+              use_gpu=use_gpu)
 
 
-def test_dl4mt_inference(test_dir):
+def test_dl4mt_inference(test_dir, use_gpu=False):
     from src.bin import translate
     from src.utils.common_utils import GlobalNames
 
@@ -135,13 +137,13 @@ def test_dl4mt_inference(test_dir):
                   batch_size=batch_size,
                   beam_size=beam_size,
                   model_path=model_path,
-                  use_gpu=False,
+                  use_gpu=use_gpu,
                   config_path=config_path,
                   saveto=saveto,
                   max_steps=20)
 
 
-def test_all():
+def test_all(use_gpu=False):
     test_dir = "./tmp"
 
     if not os.path.exists(test_dir):
@@ -157,19 +159,19 @@ def test_all():
 
     INFO("=" * 20)
     INFO("Test transformer training...")
-    test_transformer_train(test_dir)
+    test_transformer_train(test_dir, use_gpu=use_gpu)
     INFO("Done.")
     INFO("=" * 20)
 
     INFO("=" * 20)
     INFO("Test transformer inference...")
-    test_transformer_inference(test_dir)
+    test_transformer_inference(test_dir, use_gpu=use_gpu)
     INFO("Done.")
     INFO("=" * 20)
 
     INFO("=" * 20)
     INFO("Test transformer reload...")
-    test_transformer_train(test_dir)
+    test_transformer_train(test_dir, use_gpu=use_gpu)
     INFO("Done.")
     INFO("=" * 20)
 
@@ -177,13 +179,13 @@ def test_all():
 
     INFO("=" * 20)
     INFO("Test DL4MT training...")
-    test_dl4mt_train(test_dir)
+    test_dl4mt_train(test_dir, use_gpu=use_gpu)
     INFO("Done.")
     INFO("=" * 20)
 
     INFO("=" * 20)
     INFO("Test DL4MT inference...")
-    test_dl4mt_inference(test_dir)
+    test_dl4mt_inference(test_dir, use_gpu=use_gpu)
     INFO("Done.")
     INFO("=" * 20)
 
@@ -191,4 +193,5 @@ def test_all():
 
 
 if __name__ == "__main__":
-    test_all()
+    args = parser.parse_args()
+    test_all(use_gpu=args.use_gpu)

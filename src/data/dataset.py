@@ -100,6 +100,10 @@ class Dataset(object):
         pass
 
     @property
+    def data_path(self):
+        raise NotImplementedError
+
+    @property
     def n_fields(self):
         raise NotImplementedError
 
@@ -120,11 +124,11 @@ class Dataset(object):
         raise NotImplementedError
 
     def _data_iter(self, shuffle):
-        """ Generate file handles of datasets.
 
-        Always return a tuple of handles.
-        """
-        raise NotImplementedError
+        if shuffle:
+            return _shuffle(self.data_path)
+        else:
+            return open(self.data_path)
 
     def data_iter(self, shuffle=False):
 
@@ -166,18 +170,15 @@ class TextLineDataset(Dataset):
             self.num_lines = sum(1 for _ in f)
 
     @property
+    def data_path(self):
+        return self._data_path
+
+    @property
     def n_fields(self):
         return 1
 
     def __len__(self):
         return self.num_lines
-
-    def _data_iter(self, shuffle):
-
-        if shuffle:
-            return _shuffle(self._data_path)
-        else:
-            return open(self._data_path)
 
     def _apply(self, line: str) -> Union[Record, None]:
         """
@@ -211,6 +212,10 @@ class ZipDataset(Dataset):
         self.datasets = datasets
 
     @property
+    def data_path(self):
+        return [ds.data_path for ds in self.datasets]
+
+    @property
     def n_fields(self):
         return len(self.datasets)
 
@@ -220,9 +225,9 @@ class ZipDataset(Dataset):
     def _data_iter(self, shuffle):
 
         if shuffle:
-            return _shuffle(*[ds._data_path for ds in self.datasets])
+            return _shuffle(*self.data_path)
         else:
-            return [open(ds._data_path) for ds in self.datasets]
+            return [open(dp) for dp in self.data_path]
 
     def _apply(self, *lines: str) -> Union[Record, None]:
         """

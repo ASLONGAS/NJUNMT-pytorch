@@ -146,7 +146,7 @@ def save_checkpoints(saveto_prefix,
                     f.write(item)
 
 
-def reload_from_latest_checkpoint(saveto_prefix, model: nn.Module, optim: Optimizer):
+def reload_from_latest_checkpoint(saveto_prefix, model: nn.Module, optim: Optimizer, device: str = "cpu"):
     """Restore from latest checkpoint
     """
     ckpt_list = saveto_prefix + ".checkpoints"
@@ -162,7 +162,7 @@ def reload_from_latest_checkpoint(saveto_prefix, model: nn.Module, optim: Optimi
     optim_path = latest_ckpt_prefix + ".optim"
     collections_path = latest_ckpt_prefix + ".collections"
 
-    model.load_state_dict(torch.load(model_path))
+    model.load_state_dict(torch.load(model_path, map_location=device))
     optim.optim.load_state_dict(torch.load(optim_path))
     collections.load(collections_path)
 
@@ -224,20 +224,14 @@ def compute_forward(model,
 
     :type critic: NMTCriterion
     """
-
-    if eval:
-        model.eval()
-        critic.eval()
-    else:
-        model.train()
-        critic.train()
-
     y_inp = seqs_y[:, :-1].contiguous()
     y_label = seqs_y[:, 1:].contiguous()
 
     words_norm = y_label.ne(PAD).float().sum(1)
 
     if not eval:
+        model.train()
+        critic.train()
         # For training
         with torch.enable_grad():
             log_probs = model(seqs_x, y_inp)
@@ -247,11 +241,11 @@ def compute_forward(model,
                 loss = loss.div(words_norm).sum()
             else:
                 loss = loss.sum()
-
         torch.autograd.backward(loss)
-
         return loss.detach().item()
     else:
+        model.eval()
+        critic.eval()
         # For compute loss
         with torch.no_grad():
             log_probs = model(seqs_x, y_inp)
@@ -370,7 +364,7 @@ def bleu_validation(uidx,
     return bleu_v
 
 
-def load_pretrained_model(nmt_model, pretrain_path, map_dict=None, exclude_prefix=None):
+def load_pretrained_model(nmt_model, pretrain_path, map_dict=None, exclude_prefix=None, device: str = "cpu"):
     """
     Args:
         nmt_model: model.
@@ -388,7 +382,7 @@ def load_pretrained_model(nmt_model, pretrain_path, map_dict=None, exclude_prefi
         exclude_prefix = []
     if pretrain_path != "":
         INFO("Loading pretrained model from {}".format(pretrain_path))
-        pretrain_params = torch.load(pretrain_path)
+        pretrain_params = torch.load(pretrain_path, map_location=device)
         for name, params in pretrain_params.items():
             flag = False
             for pp in exclude_prefix:
@@ -413,6 +407,8 @@ def default_configs(configs):
 
     configs["training_configs"].setdefault("bleu_valid_max_steps", 150)
 
+    configs["training_configs"].setdefault("norm_by_words", False)
+
     return configs
 
 
@@ -431,6 +427,11 @@ def train(FLAGS):
     write_log_to_file(os.path.join(FLAGS.log_path, "%s.log" % time.strftime("%Y%m%d-%H%M%S")))
 
     GlobalNames.USE_GPU = FLAGS.use_gpu
+
+    if GlobalNames.USE_GPU:
+        GlobalNames.CURRENT_DEVICE = "cpu"
+    else:
+        GlobalNames.CURRENT_DEVICE = "cuda:0"
 
     config_path = os.path.abspath(FLAGS.config_path)
     with open(config_path.strip()) as f:
@@ -507,11 +508,20 @@ def train(FLAGS):
     lrate = optimizer_configs['learning_rate']
     is_early_stop = False
 
-    # ================================================================================== #
-    # Build Model & Sampler & Validation
+    # ================================ Begin ======================================== #
+    # Build Model & Optimizer
+    # We would do steps below on after another
+    #     1. build models & criterion
+    #     2. move models & criterion to gpu if needed
+    #     3. load pre-trained model if needed
+    #     4. build optimizer
+    #     5. build learning rate scheduler if needed
+    #     6. load checkpoints if needed
+
+    # 1. Build Model & Criterion
     INFO('Building model...')
     timer.tic()
-    nmt_model = build_model(model_configs["model"], n_src_vocab=vocab_src.max_n_words,
+    nmt_model = build_model(n_src_vocab=vocab_src.max_n_words,
                             n_tgt_vocab=vocab_tgt.max_n_words, **model_configs)
     INFO(nmt_model)
 
@@ -520,6 +530,15 @@ def train(FLAGS):
     INFO(critic)
     INFO('Done. Elapsed time {0}'.format(timer.toc()))
 
+    # 2. Move to GPU
+    if GlobalNames.USE_GPU:
+        nmt_model = nmt_model.cuda()
+        critic = critic.cuda()
+
+    # 3. Load pretrained model if needed
+    load_pretrained_model(nmt_model, FLAGS.pretrain_path, exclude_prefix=None, device=GlobalNames.CURRENT_DEVICE)
+
+    # 4. Build optimizer
     INFO('Building Optimizer...')
     optim = Optimizer(name=optimizer_configs['optimizer'],
                       model=nmt_model,
@@ -528,21 +547,7 @@ def train(FLAGS):
                       optim_args=optimizer_configs['optimizer_params']
                       )
 
-    if GlobalNames.USE_GPU:
-        nmt_model = nmt_model.cuda()
-        critic = critic.cuda()
-
-    # Load pretrain model
-    load_pretrained_model(nmt_model, FLAGS.pretrain_path, exclude_prefix=None)
-
-    # Whether Reloading model
-    if FLAGS.reload:
-        reload_from_latest_checkpoint(saveto_prefix=os.path.join(FLAGS.saveto, FLAGS.model_name),
-                                      model=nmt_model,
-                                      optim=optim)
-    # Configure Learning Scheduler
-    # Here we have two policies, "loss" and "noam"
-
+    # 5. Build scheduler for optimizer if needed
     if optimizer_configs['schedule_method'] is not None:
 
         if optimizer_configs['schedule_method'] == "loss":
@@ -559,6 +564,14 @@ def train(FLAGS):
         scheduler = None
 
     INFO('Done. Elapsed time {0}'.format(timer.toc()))
+
+    # 6. Reloading checkpoints
+    if FLAGS.reload:
+        reload_from_latest_checkpoint(saveto_prefix=os.path.join(FLAGS.saveto, FLAGS.model_name),
+                                      model=nmt_model,
+                                      optim=optim, device=GlobalNames.CURRENT_DEVICE)
+
+    # ================================ End ======================================== #
 
     # ================================================================================== #
     # Prepare training
@@ -779,7 +792,7 @@ def translate(FLAGS):
     # Build Model & Sampler & Validation
     INFO('Building model...')
     timer.tic()
-    nmt_model = build_model(model_configs["model"], n_src_vocab=vocab_src.max_n_words,
+    nmt_model = build_model(n_src_vocab=vocab_src.max_n_words,
                             n_tgt_vocab=vocab_tgt.max_n_words, **model_configs)
     nmt_model.eval()
     INFO('Done. Elapsed time {0}'.format(timer.toc()))
