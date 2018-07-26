@@ -11,13 +11,16 @@ before_install:
   - pip install tqdm
   - pip install pyyaml
   - pip install tensorboardX
+  - pip install sacrebleu
 
 sudo: false
 
 install: true
 
 before_script:
-  - cp ./unittest/run_all_test.py .
+  - cp ./unittest/test_dl4mt.py .
+  - cp ./unittest/test_transfomer.py
 
 script:
-  - python run_all_test.py
+  - python test_dl4mt.py
+  - python test_transfomer.py

@@ -141,9 +141,14 @@ def save_checkpoints(saveto_prefix,
             saved_ckpt_list = f.readlines()
         with open(ckpt_list, "w") as f:
             f.write(saveto_prefix + "\n")
-            if len(saved_ckpt_list) + 1 > max_keeps:
-                for item in saved_ckpt_list[:-1]:
-                    f.write(item)
+            for ii in range(len(saved_ckpt_list)):
+                if ii < max_keeps - 1:
+                    f.write(saved_ckpt_list[ii])
+                else:
+                    for root, _, files in os.walk(saveto_dir):
+                        for file in files:
+                            if saved_ckpt_list[ii] in file:
+                                os.remove(os.path.join(root, file))
 
 
 def reload_from_latest_checkpoint(saveto_prefix, model: nn.Module, optim: Optimizer, device: str = "cpu"):
@@ -154,6 +159,8 @@ def reload_from_latest_checkpoint(saveto_prefix, model: nn.Module, optim: Optimi
     if not os.path.exists(ckpt_list):
         INFO("No checkpoint files found.")
         return
+
+    INFO("Loading latest checkpoint from {0}...".format(ckpt_list))
 
     with open(ckpt_list) as f:
         latest_ckpt_prefix = f.readlines()[0].strip()
@@ -401,6 +408,8 @@ def load_pretrained_model(nmt_model, pretrain_path, map_dict=None, exclude_prefi
 
 
 def default_configs(configs):
+    configs["model_configs"].setdefault("label_smoothing", 0.0)
+
     configs["training_configs"].setdefault("norm_by_words", False)
 
     configs["training_configs"].setdefault("buffer_size", 20 * configs["training_configs"]["batch_size"])
@@ -496,11 +505,12 @@ def train(FLAGS):
                                   use_bucket=False)
 
     bleu_scorer = ExternalScriptBLEUScorer(reference_path=data_configs['bleu_valid_reference'],
-                                           lang=data_configs['lang_pair'].split('-')[1],
+                                           lang_pair=data_configs['lang_pair'],
                                            bleu_script=training_configs['bleu_valid_configs']['bleu_script'],
                                            digits_only=True,
                                            lc=training_configs['bleu_valid_configs']['lowercase'],
-                                           postprocess=training_configs['bleu_valid_configs']['postprocess']
+                                           postprocess=training_configs['bleu_valid_configs']['postprocess'],
+                                           num_refs=data_configs["num_refs"]
                                            )
 
     INFO('Done. Elapsed time {0}'.format(timer.toc()))
@@ -704,6 +714,7 @@ def train(FLAGS):
                                        every_n_step=training_configs['bleu_valid_freq'],
                                        min_step=training_configs['bleu_valid_warmup'],
                                        debug=FLAGS.debug):
+
                 valid_bleu = bleu_validation(uidx=uidx,
                                              valid_iterator=valid_iterator,
                                              batch_size=training_configs['bleu_valid_batch_size'],
@@ -717,6 +728,12 @@ def train(FLAGS):
 
                 collections.add_to_collection(key="history_bleus", value=valid_bleu)
 
+                if "dl4mt" in FLAGS.model_name:
+                    print()
+                    print(valid_bleu)
+                    print(collections.get_collection("history_bleus"))
+                    exit(5)
+
                 best_valid_bleu = float(np.array(collections.get_collection("history_bleus")).max())
 
                 summary_writer.add_scalar("bleu", valid_bleu, uidx)
@@ -728,6 +745,7 @@ def train(FLAGS):
 
                     if is_early_stop is False:
                         INFO('Saving best model...')
+
                         # save model
                         best_params = nmt_model.state_dict()
                         torch.save(best_params, saveto_best_model)

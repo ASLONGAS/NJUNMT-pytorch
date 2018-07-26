@@ -11,16 +11,19 @@ MULTI_BLEU_PL = os.path.join(os.path.dirname(__file__), "scripts/generic/multi-b
 MULTI_BLEU_DETOK_PL = os.path.join(os.path.dirname(__file__), "scripts/generic/multi-bleu-detok.perl")
 ZH_TOKENIZER_PY = os.path.join(os.path.dirname(__file__), "scripts/tokenizer/tokenizeChinese.py")
 
+
 class ExternalScriptBLEUScorer(object):
     """Evaluate translation using external scripts.
 
     Scripts are mainly from moses for post-processing and BLEU computation
     """
     _SCRIPTS = {"multi-bleu": MULTI_BLEU_PL,
-                "multi-bleu-detok": MULTI_BLEU_DETOK_PL}
+                "multi-bleu-detok": MULTI_BLEU_DETOK_PL,
+                "sacrebleu": "sacrebleu"
+                }
 
-
-    def __init__(self, reference_path, lang, bleu_script, digits_only=True, lc=False, postprocess=True):
+    def __init__(self, reference_path, lang_pair, bleu_script, digits_only=True, lc=False, postprocess=True,
+                 num_refs=1):
         """Initialize Scorer
 
         Args:
@@ -38,8 +41,10 @@ class ExternalScriptBLEUScorer(object):
 
             postprocess: Whether do post-processing.
         """
+
+        self.lang_pair = lang_pair.lower()
         self.reference_path = reference_path
-        self.lang = lang.lower()
+        self.lang = self.lang_pair.split("-")[1]
 
         if bleu_script not in self._SCRIPTS:
             raise ValueError
@@ -48,6 +53,7 @@ class ExternalScriptBLEUScorer(object):
         self.digits_only = digits_only
         self.lc = lc
         self.postprocess = postprocess
+        self.num_refs = num_refs
 
     def _postprocess_cmd(self, stdin):
 
@@ -57,13 +63,13 @@ class ExternalScriptBLEUScorer(object):
         if self.lang != "zh":
             cmd_truecase = subprocess.Popen(["perl", DETRUECASE_PL], stdin=stdin, stdout=subprocess.PIPE)
             cmd_postprocess = subprocess.Popen(["perl", DETOKENIZE_PL, "-q", "-u", "-l", self.lang],
-                                              stdin=cmd_truecase.stdout,
-                                              stdout=subprocess.PIPE)
+                                               stdin=cmd_truecase.stdout,
+                                               stdout=subprocess.PIPE)
         else:
             # For chinese, we first remove all the space.
             # Then, we use external scripts to split into chinese characters except those non-chinese words.
 
-            cmd_rm_space = subprocess.Popen(["sed","s/ //g"], stdin=stdin, stdout=subprocess.PIPE)
+            cmd_rm_space = subprocess.Popen(["sed", "s/ //g"], stdin=stdin, stdout=subprocess.PIPE)
             cmd_postprocess = subprocess.Popen(["python", ZH_TOKENIZER_PY, "-p"], stdin=cmd_rm_space.stdout,
                                                stdout=subprocess.PIPE)
 
@@ -71,21 +77,58 @@ class ExternalScriptBLEUScorer(object):
 
     def _compute_bleu(self, stdin):
 
-        cmd_bleu_str = ["perl",]
+        if self.script.startswith("multi-bleu"):
+            cmd_bleu_str = ["perl", ]
 
-        cmd_bleu_str.append(self._SCRIPTS[self.script])
+            cmd_bleu_str.append(self._SCRIPTS[self.script])
 
-        # Whether convert reference into lower case
-        if self.lc:
-            cmd_bleu_str.append("-lc")
+            # Whether convert reference into lower case
+            if self.lc:
+                cmd_bleu_str.append("-lc")
 
-        cmd_bleu_str.append(self.reference_path)
+            cmd_bleu_str.append(self.reference_path)
 
-        cmd_bleu = subprocess.Popen(cmd_bleu_str, stdin=stdin, stdout=subprocess.PIPE)
+            cmd_bleu = subprocess.Popen(cmd_bleu_str, stdin=stdin, stdout=subprocess.PIPE)
 
-        cmd_out = cmd_bleu.communicate()[0]
+            cmd_out = cmd_bleu.communicate()[0].decode("utf-8")
 
-        return cmd_out
+            cmd_out = cmd_out.strip().split("\n")[0]
+
+            if self.digits_only:
+                out = cmd_out.split(',')[0].split("=")[-1].strip()
+                out = float(out)
+            else:
+                out = cmd_out
+            return out
+
+        else:
+            cmd_bleu_str = [self._SCRIPTS[self.script], "--quiet", "--force"]
+
+            # lowercase
+            if self.lc:
+                cmd_bleu_str.append("-lc")
+
+            # specify language pair
+            cmd_bleu_str += ["-l", self.lang_pair]
+
+            # only return digits
+            if self.digits_only:
+                cmd_bleu_str += ["-b", ]
+
+            # how many references
+            if self.num_refs == 1:
+                cmd_bleu_str += [self.reference_path]
+            else:
+                cmd_bleu_str += [self.reference_path + str(ii) for ii in range(self.num_refs)]
+
+            cmd_bleu = subprocess.Popen(cmd_bleu_str, stdin=stdin, stdout=subprocess.PIPE)
+
+            cmd_out = cmd_bleu.communicate()[0].decode("utf-8").strip()
+
+            if self.digits_only:
+                return float(cmd_out)
+            else:
+                return cmd_out
 
     def corpus_bleu(self, hyp_in):
 
@@ -96,11 +139,5 @@ class ExternalScriptBLEUScorer(object):
         else:
             cmd_postprocess = cmd_bpe
 
-        out = self._compute_bleu(stdin=cmd_postprocess.stdout).decode("utf-8").strip().split("\n")
-        out = [line for line in out if line.startswith("BLEU")][0]
-
-        if self.digits_only:
-            out = out.split(',')[0].split("=")[-1].strip()
-            out = float(out)
-
+        out = self._compute_bleu(stdin=cmd_postprocess.stdout)
         return out

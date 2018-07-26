@@ -99,50 +99,6 @@ def test_transformer_inference(test_dir, use_gpu=False):
                   saveto=saveto,
                   max_steps=20)
 
-
-def test_dl4mt_train(test_dir, use_gpu=False):
-    from src.bin import train
-
-    config_path = "./unittest/configs/test_dl4mt.yaml"
-    model_name = get_model_name(config_path)
-
-    saveto = os.path.join(test_dir, "save")
-    log_path = os.path.join(test_dir, "log")
-    valid_path = os.path.join(test_dir, "valid")
-
-    train.run(model_name=model_name,
-              config_path=config_path,
-              saveto=saveto,
-              log_path=log_path,
-              valid_path=valid_path,
-              debug=True,
-              use_gpu=use_gpu)
-
-
-def test_dl4mt_inference(test_dir, use_gpu=False):
-    from src.bin import translate
-    from src.utils.common_utils import GlobalNames
-
-    config_path = "./unittest/configs/test_dl4mt.yaml"
-
-    saveto = os.path.join(test_dir, "save")
-    model_name = get_model_name(config_path)
-    model_path = os.path.join(saveto, model_name + GlobalNames.MY_BEST_MODEL_SUFFIX)
-    source_path = "./unittest/data/dev/zh.0"
-    batch_size = 3
-    beam_size = 3
-
-    translate.run(model_name=model_name,
-                  source_path=source_path,
-                  batch_size=batch_size,
-                  beam_size=beam_size,
-                  model_path=model_path,
-                  use_gpu=use_gpu,
-                  config_path=config_path,
-                  saveto=saveto,
-                  max_steps=20)
-
-
 def test_all(use_gpu=False):
     test_dir = "./tmp"
 
@@ -172,20 +128,6 @@ def test_all(use_gpu=False):
     INFO("=" * 20)
     INFO("Test transformer reload...")
     test_transformer_train(test_dir, use_gpu=use_gpu)
-    INFO("Done.")
-    INFO("=" * 20)
-
-    clean_tmp_dir(test_dir)
-
-    INFO("=" * 20)
-    INFO("Test DL4MT training...")
-    test_dl4mt_train(test_dir, use_gpu=use_gpu)
-    INFO("Done.")
-    INFO("=" * 20)
-
-    INFO("=" * 20)
-    INFO("Test DL4MT inference...")
-    test_dl4mt_inference(test_dir, use_gpu=use_gpu)
     INFO("Done.")
     INFO("=" * 20)
 

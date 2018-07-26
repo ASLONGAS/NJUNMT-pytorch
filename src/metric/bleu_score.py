@@ -17,10 +17,10 @@ parser.add_argument("-i", "--input", nargs="?", type=argparse.FileType("r"), def
                     """)
 
 parser.add_argument("-r", "--reference", type=str,
-                    help="Path of references.")
+                    help="""Path of references.""")
 
-parser.add_argument("-t", "--target", type=str,
-                    help="Language of target side.")
+parser.add_argument("-l", "--language_pair", type=str,
+                    help="""Language of target side.""")
 
 parser.add_argument("-s", "--script", type=str,
                     help="""
@@ -38,20 +38,25 @@ parser.add_argument("-d", "--digits_only", action="store_true",
                     Only return digits of BLEU.
                     """)
 
-parser.add_argument("-l", "--lowercase", action="store_true",
+parser.add_argument("-lc", "--lowercase", action="store_true",
                     help="""
                     Lowercase references. This is equivalent to '-lc' option of 'multi-bleu.perl' or 'multi-bleu-detok.perl'.
                     """)
+
+parser.add_argument("--num_refs", type=int, default=1,
+                    help="""Number of references.""")
 
 def main(FLAGS):
 
 
     scorer = ExternalScriptBLEUScorer(reference_path=FLAGS.reference,
-                                      lang=FLAGS.target,
+                                      lang_pair=FLAGS.lang_pair,
                                       bleu_script=FLAGS.script,
                                       digits_only=FLAGS.digits_only,
                                       lc=FLAGS.lowercase,
-                                      postprocess=FLAGS.postprocess)
+                                      postprocess=FLAGS.postprocess,
+                                      num_refs=FLAGS.num_refs
+                                      )
 
     print(scorer.corpus_bleu(FLAGS.input))
 
