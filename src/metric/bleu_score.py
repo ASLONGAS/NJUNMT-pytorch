@@ -19,7 +19,7 @@ parser.add_argument("-i", "--input", nargs="?", type=argparse.FileType("r"), def
 parser.add_argument("-r", "--reference", type=str,
                     help="""Path of references.""")
 
-parser.add_argument("-l", "--language_pair", type=str,
+parser.add_argument("-l", "--lang_pair", type=str,
                     help="""Language of target side.""")
 
 parser.add_argument("-s", "--script", type=str,
