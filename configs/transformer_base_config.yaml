@@ -7,18 +7,13 @@ data_configs:
     - "/home/user_data/weihr/NMT_DATA_PY3/1.34M/test/MT03/zh.0"
     - "/home/user_data/weihr/NMT_DATA_PY3/1.34M/test/MT03/en.0"
   bleu_valid_reference: "/home/user_data/weihr/NMT_DATA_PY3/1.34M/test/MT03/en."
-  dictionaries:
-    - "/home/user_data/weihr/NMT_DATA_PY3/1.34M/dict/dict.zh.json"
-    - "/home/user_data/weihr/NMT_DATA_PY3/1.34M/dict/dict.en.json"
-  bpe_codes:
-    - ""
-    - ""
-  use_char:
-    - false
-    - false
-  n_words:
-    - 30000
-    - 30000
+  vocabularies:
+    - vocab_type: "word"
+      dict_path: "/home/user_data/weihr/NMT_DATA_PY3/1.34M/dict/dict.zh.json"
+      max_n_words: -1
+    - vocab_type: "word"
+      dict_path: "/home/user_data/weihr/NMT_DATA_PY3/1.34M/dict/dict.en.json"
+      max_n_words: -1
   max_len:
     - -1
     - -1
@@ -64,6 +59,7 @@ training_configs:
     postprocess: false
   disp_freq: 100 # Frequency to print information
   save_freq: 1000 # Frequency to save the model
+  keep_checkpoint_max: 1
   loss_valid_freq: &decay_freq 100
   bleu_valid_freq: 1000
   early_stop_patience: 20
